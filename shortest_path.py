@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import csv
+import json
 from pathlib import Path
 from itertools import islice
 
@@ -530,45 +531,29 @@ for node in selected_nodes:
 
     street_count = G.nodes[node].get("street_count", 0)
 
+    info_html = f"""
+    <b>Vertex:</b> {node_to_index[node]}<br>
+    <b>Latitude:</b> {lat:.8f}<br>
+    <b>Longitude:</b> {lon:.8f}<br>
+    <b>Street Count:</b> {street_count}
+    """
+
     vertex_marker = folium.CircleMarker(
-
         location=[lat, lon],
-
         radius=7,
-
         color="white",
         weight=2,
-
         fill=True,
         fill_color="green",
         fill_opacity=0.9,
-
-        tooltip=folium.Tooltip(
-
-            f"""
-            <b>Vertex:</b> {node_to_index[node]}<br>
-            <b>Latitude:</b> {lat:.8f}<br>
-            <b>Longitude:</b> {lon:.8f}<br>
-            <b>Street Count:</b> {street_count}
-            """,
-
-            sticky=True
-        )
-
+        tooltip=folium.Tooltip(info_html, sticky=True)
     )
+    folium.Popup(info_html).add_to(vertex_marker)
+    
     vertex_marker.add_to(m)
 
     marker_name = f"vertex_marker_{node_to_index[node]}"
-
     vertex_marker._name = marker_name
-
-    m.get_root().script.add_child(
-        folium.Element(
-            f"""
-            window.{marker_name} = {vertex_marker.get_name()};
-            """
-        )
-)
 
     
 
@@ -737,27 +722,37 @@ for idx, path in enumerate(paths):
 
     first_node = path[0]
     last_node = path[-1]
+    first_lat = G.nodes[first_node]["y"]
+    first_lon = G.nodes[first_node]["x"]
+    last_lat = G.nodes[last_node]["y"]
+    last_lon = G.nodes[last_node]["x"]
 
     folium.Marker(
         location=[
-            G.nodes[first_node]["y"],
-            G.nodes[first_node]["x"]
+            first_lat,
+            first_lon
         ],
         popup=f"""
         <b>Start Path {idx+1}</b><br>
-        HCMUT: {GATE_DISPLAY_NAMES[START_GATE]}
+        HCMUT: {GATE_DISPLAY_NAMES[START_GATE]}<br>
+        <b>Vertex:</b> {node_to_index[first_node]}<br>
+        <b>Latitude:</b> {first_lat:.8f}<br>
+        <b>Longitude:</b> {first_lon:.8f}
         """,
         icon=folium.Icon(color="green")
     ).add_to(path_group)
 
     folium.Marker(
         location=[
-            G.nodes[last_node]["y"],
-            G.nodes[last_node]["x"]
+            last_lat,
+            last_lon
         ],
         popup=f"""
         <b>End Path {idx+1}</b><br>
-        Ben Thanh: {GATE_DISPLAY_NAMES[END_GATE]}
+        Ben Thanh: {GATE_DISPLAY_NAMES[END_GATE]}<br>
+        <b>Vertex:</b> {node_to_index[last_node]}<br>
+        <b>Latitude:</b> {last_lat:.8f}<br>
+        <b>Longitude:</b> {last_lon:.8f}
         """,
         icon=folium.Icon(color="darkred")
     ).add_to(path_group)
@@ -1017,11 +1012,21 @@ GRAPH INFORMATION
 
 <div>
 
-<button onclick="expandPanel()">
+<button onclick="expandPanel()" style="
+width:30px;
+height:30px;
+font-size:18px;
+cursor:pointer;
+">
 +
 </button>
 
-<button onclick="collapsePanel()">
+<button onclick="collapsePanel()" style="
+width:30px;
+height:30px;
+font-size:18px;
+cursor:pointer;
+">
 -
 </button>
 
@@ -1066,6 +1071,14 @@ for idx, node in enumerate(selected_nodes_list):
         f'{lon:.8f}\n'
     )
 
+vertex_coords = {
+    idx: [
+        G.nodes[node]["y"],
+        G.nodes[node]["x"],
+    ]
+    for idx, node in enumerate(selected_nodes_list)
+}
+
 vertex_info_html += """
 </pre>
 
@@ -1086,16 +1099,7 @@ padding:5px;
 FROM | TO | DISTANCE(m)
 """
 
-written_edges_panel = set()
-
 for u, v, data in subgraph.edges(data=True):
-
-    edge_key = tuple(sorted((str(u), str(v))))
-
-    if edge_key in written_edges_panel:
-        continue
-
-    written_edges_panel.add(edge_key)
 
     if (
         u not in node_to_index
@@ -1169,20 +1173,59 @@ Download edges CSV
 
 <script>
 
+const vertexCoords = __VERTEX_COORDS__;
+
+function getVertexMarker(vertexId) {
+
+    let coords = vertexCoords[vertexId];
+
+    if (!coords) {
+        return null;
+    }
+
+    let foundMarker = null;
+
+    __MAP_NAME__.eachLayer(function(layer) {
+
+        if (
+            foundMarker !== null ||
+            typeof layer.getLatLng !== "function" ||
+            typeof layer.openPopup !== "function"
+        ) {
+            return;
+        }
+
+        let latLng = layer.getLatLng();
+
+        if (
+            Math.abs(latLng.lat - coords[0]) < 0.00000001 &&
+            Math.abs(latLng.lng - coords[1]) < 0.00000001
+        ) {
+            foundMarker = layer;
+        }
+    });
+
+    return foundMarker;
+}
+
 function focusVertex(vertexId) {
 
-    let marker = window["vertex_marker_" + vertexId];
+    let coords = vertexCoords[vertexId];
 
-    if (!marker) {
+    if (!coords) {
         return;
     }
 
-    {map_name}.setView(
-        marker.getLatLng(),
+    __MAP_NAME__.setView(
+        coords,
         18
     );
 
-    marker.openTooltip();
+    let marker = getVertexMarker(vertexId);
+
+    if (marker) {
+        marker.openPopup();
+    }
 }
 
 let currentEdge = null;
@@ -1190,20 +1233,22 @@ let currentEdge = null;
 function focusEdge(coords) {
 
     if (currentEdge !== null) {
-        {map_name}.removeLayer(currentEdge);
+        __MAP_NAME__.removeLayer(currentEdge);
     }
 
     currentEdge = L.polyline(
         coords,
         {
-            color: 'yellow',
-            weight: 8,
-            opacity: 1
+            color: 'red',
+            weight: 6,
+            opacity: 0.8,
+            lineJoin: 'round'
         }
-    ).addTo({map_name});
+    ).addTo(__MAP_NAME__);
 
-    map.fitBounds(
-        currentEdge.getBounds()
+    __MAP_NAME__.fitBounds(
+        currentEdge.getBounds(),
+        {padding: [50, 50]}
     );
 }
 
@@ -1227,10 +1272,21 @@ function expandPanel() {
 
 }
 
+window.focusVertex = focusVertex;
+window.focusEdge = focusEdge;
+window.collapsePanel = collapsePanel;
+window.expandPanel = expandPanel;
+
 </script>
 
 </div>
-"""
+""".replace(
+    "__MAP_NAME__",
+    map_name
+).replace(
+    "__VERTEX_COORDS__",
+    json.dumps(vertex_coords)
+)
 
 m.get_root().html.add_child(
     folium.Element(vertex_info_html)

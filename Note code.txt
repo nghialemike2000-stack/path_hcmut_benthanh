@@ -4,6 +4,7 @@ import math
 import csv
 from pathlib import Path
 from itertools import islice
+import json
 
 import folium
 import networkx as nx
@@ -529,13 +530,12 @@ for node in selected_nodes:
     lon = G.nodes[node]["x"]
 
     street_count = G.nodes[node].get("street_count", 0)
-    node_idx = node_to_index[node]
-    
-    info_text = f"""
-        <b>Vertex:</b> {node_idx}<br>
-        <b>Latitude:</b> {lat:.8f}<br>
-        <b>Longitude:</b> {lon:.8f}<br>
-        <b>Street Count:</b> {street_count}
+
+    info_html = f"""
+    <b>Vertex:</b> {node_to_index[node]}<br>
+    <b>Latitude:</b> {lat:.8f}<br>
+    <b>Longitude:</b> {lon:.8f}<br>
+    <b>Street Count:</b> {street_count}
     """
 
     vertex_marker = folium.CircleMarker(
@@ -546,20 +546,22 @@ for node in selected_nodes:
         fill=True,
         fill_color="green",
         fill_opacity=0.9,
-        tooltip=folium.Tooltip(info_text, sticky=True)
+        tooltip=folium.Tooltip(info_html, sticky=True)
     )
-
+    folium.Popup(info_html).add_to(vertex_marker)
     
-    vertex_marker.add_child(folium.Popup(info_text))
     vertex_marker.add_to(m)
 
-    marker_name = f"vertex_marker_{node_idx}"
+    marker_name = f"vertex_marker_{node_to_index[node]}"
     vertex_marker._name = marker_name
 
     m.get_root().script.add_child(
-        folium.Element(f"window.{marker_name} = {vertex_marker.get_name()};")
+        folium.Element(
+            f"""
+            window["{marker_name}"] = {vertex_marker.get_name()};
+            """
+        )
     )
-)
 
     
 
@@ -1008,11 +1010,21 @@ GRAPH INFORMATION
 
 <div>
 
-<button onclick="expandPanel()">
+<button onclick="expandPanel()" style="
+width:30px;
+height:30px;
+font-size:18px;
+cursor:pointer;
+">
 +
 </button>
 
-<button onclick="collapsePanel()">
+<button onclick="collapsePanel()" style="
+width:30px;
+height:30px;
+font-size:18px;
+cursor:pointer;
+">
 -
 </button>
 
@@ -1116,10 +1128,12 @@ for u, v, data in subgraph.edges(data=True):
             [G.nodes[v]["y"], G.nodes[v]["x"]]
         ]
 
+    safe_edge_coords = json.dumps(edge_coords).replace('"', '&quot;')
+
     vertex_info_html += (
         f'<span '
         f'style="cursor:pointer;color:red;" '
-        f'onclick=\'focusEdge({edge_coords})\'>'
+        f'onclick="focusEdge({safe_edge_coords})">'
         f'{u_idx:03d} | {v_idx:03d}'
         f'</span> | '
         f'{length:.2f}\n'
@@ -1161,9 +1175,7 @@ Download edges CSV
 <script>
 
 function focusVertex(vertexId) {
-
     let marker = window["vertex_marker_" + vertexId];
-
     if (!marker) {
         return;
     }
@@ -1184,14 +1196,20 @@ function focusEdge(coords) {
         {map_name}.removeLayer(currentEdge);
     }
 
-    currentEdge = L.polyline(coords, {
-        color: 'red',
-        weight: 6,
-        opacity: 0.8,
-        lineJoin: 'round'
-    }).addTo({map_name});
+    currentEdge = L.polyline(
+        coords,
+        {
+            color: 'red',
+            weight: 6,
+            opacity: 0.8,
+            lineJoin: 'round'
+        }
+    ).addTo({map_name});
 
-    {map_name}.fitBounds(currentEdge.getBounds(), {padding: [50, 50]});
+    {map_name}.fitBounds(
+        currentEdge.getBounds(),
+        {padding: [50, 50]}
+    );
 }
 
 function collapsePanel() {
@@ -1201,7 +1219,6 @@ function collapsePanel() {
     document.getElementById("graph-panel").style.width = "250px";
 
     document.getElementById("graph-panel").style.height = "60px";
-
 }
 
 function expandPanel() {
@@ -1211,7 +1228,15 @@ function expandPanel() {
     document.getElementById("graph-panel").style.width = "430px";
 
     document.getElementById("graph-panel").style.height = "700px";
+}
 
+var panel = document.getElementById('graph-panel');
+
+if (panel) {
+
+    L.DomEvent.disableClickPropagation(panel);
+
+    L.DomEvent.disableScrollPropagation(panel);
 }
 
 </script>
