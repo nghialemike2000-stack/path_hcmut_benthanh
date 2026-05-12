@@ -112,13 +112,29 @@ custom_filter = """
 ["highway"~"motorway|trunk|primary|secondary|tertiary"]
 """
 
-G = ox.graph_from_bbox(
+# =========================================================
+# DOWNLOAD AND CONSOLIDATE GRAPH
+# =========================================================
+print("Downloading and consolidating map data...")
+
+# Download original graph
+G_raw = ox.graph_from_bbox(
     bbox,
     custom_filter=custom_filter,
     simplify=True,
 )
 
-print(f"Full graph loaded:")
+# Project to UTM (meters) for accurate distance consolidation
+G_proj = ox.project_graph(G_raw)
+
+# Consolidate intersections within 25 meters to merge close nodes
+# This handles complex junctions and dual carriage ways
+G_cons = ox.consolidate_intersections(G_proj, rebuild_graph=True, tolerance=25, dead_ends=False)
+
+# Project back to WGS84 (lat/long) for folium and GPS calculations
+G = ox.project_graph(G_cons, to_crs="EPSG:4326")
+
+print(f"Consolidated graph loaded:")
 print(f"Nodes: {len(G.nodes)}")
 print(f"Edges: {len(G.edges)}")
 
@@ -376,9 +392,33 @@ for path in paths:
 # if still not enough vertices,
 # add nearby intersections
 
+# =========================================================
+# ADD MORE INTERSECTIONS WITH DISTANCE GAP
+# =========================================================
+
+MIN_NODE_GAP = 80  # Minimum distance in meters between any two selected nodes
+
 if len(selected_nodes) < TARGET_VERTICES:
 
-    print("\nAdding more intersections...")
+    print(f"\nAdding more intersections with {MIN_NODE_GAP}m gap...")
+
+    center_lat = (
+        loc_ben_thanh[0] + loc_bach_khoa[0]
+    ) / 2
+
+    center_lon = (
+        loc_ben_thanh[1] + loc_bach_khoa[1]
+    ) / 2
+
+    def corridor_distance(node_id: int):
+
+        lat = G.nodes[node_id]["y"]
+        lon = G.nodes[node_id]["x"]
+
+        return geodesic(
+            (lat, lon),
+            (center_lat, center_lon)
+        ).meters
 
     candidates = []
 
@@ -387,30 +427,10 @@ if len(selected_nodes) < TARGET_VERTICES:
         if node in selected_nodes:
             continue
 
-        # prioritize intersections
         street_count = int(data.get("street_count", 0))
 
         if street_count >= 3:
             candidates.append(node)
-
-    # sort by distance to center line
-    def corridor_distance(node_id: int):
-
-        lat = G.nodes[node_id]["y"]
-        lon = G.nodes[node_id]["x"]
-
-        center_lat = (
-            loc_ben_thanh[0] + loc_bach_khoa[0]
-        ) / 2
-
-        center_lon = (
-            loc_ben_thanh[1] + loc_bach_khoa[1]
-        ) / 2
-
-        return math.hypot(
-            lat - center_lat,
-            lon - center_lon
-        )
 
     candidates.sort(key=corridor_distance)
 
@@ -419,7 +439,27 @@ if len(selected_nodes) < TARGET_VERTICES:
         if len(selected_nodes) >= TARGET_VERTICES:
             break
 
-        selected_nodes.add(node)
+        node_lat = G.nodes[node]["y"]
+        node_lon = G.nodes[node]["x"]
+
+        is_too_close = False
+
+        for s_node in selected_nodes:
+
+            s_lat = G.nodes[s_node]["y"]
+            s_lon = G.nodes[s_node]["x"]
+
+            dist = geodesic(
+                (node_lat, node_lon),
+                (s_lat, s_lon)
+            ).meters
+
+            if dist < MIN_NODE_GAP:
+                is_too_close = True
+                break
+
+        if not is_too_close:
+            selected_nodes.add(node)
 
 print(f"\nSelected vertices: {len(selected_nodes)}")
 
@@ -431,6 +471,18 @@ subgraph = G.subgraph(selected_nodes).copy()
 
 print(f"Subgraph nodes: {len(subgraph.nodes)}")
 print(f"Subgraph edges: {len(subgraph.edges)}")
+
+# =========================================================
+# CREATE NODE INDEX
+# =========================================================
+
+selected_nodes_list = list(selected_nodes)
+
+node_to_index = {}
+
+for idx, node in enumerate(selected_nodes_list):
+
+    node_to_index[node] = idx
 
 # =========================================================
 # CREATE GOOGLE MAP STYLE VIEW
@@ -450,6 +502,7 @@ m = folium.Map(
     tiles="OpenStreetMap"
 )
 
+map_name = m.get_name()
 # =========================================================
 # MARK MAIN LOCATIONS
 # =========================================================
@@ -476,18 +529,39 @@ for node in selected_nodes:
     lon = G.nodes[node]["x"]
 
     street_count = G.nodes[node].get("street_count", 0)
+    node_idx = node_to_index[node]
+    
+    info_text = f"""
+        <b>Vertex:</b> {node_idx}<br>
+        <b>Latitude:</b> {lat:.8f}<br>
+        <b>Longitude:</b> {lon:.8f}<br>
+        <b>Street Count:</b> {street_count}
+    """
 
-    folium.CircleMarker(
+    vertex_marker = folium.CircleMarker(
         location=[lat, lon],
-        radius=4,
-        color="green",
+        radius=7,
+        color="white",
+        weight=2,
         fill=True,
-        fill_opacity=0.8,
-        popup=(
-            f"Node: {node}<br>"
-            f"Street Count: {street_count}"
-        )
-    ).add_to(m)
+        fill_color="green",
+        fill_opacity=0.9,
+        tooltip=folium.Tooltip(info_text, sticky=True)
+    )
+
+    
+    vertex_marker.add_child(folium.Popup(info_text))
+    vertex_marker.add_to(m)
+
+    marker_name = f"vertex_marker_{node_idx}"
+    vertex_marker._name = marker_name
+
+    m.get_root().script.add_child(
+        folium.Element(f"window.{marker_name} = {vertex_marker.get_name()};")
+    )
+)
+
+    
 
 # =========================================================
 # DRAW K SHORTEST PATHS WITH LAYER CONTROL
@@ -640,8 +714,11 @@ for idx, path in enumerate(paths):
             fill_opacity=1.0,
 
             popup=f"""
-            Node: {node}<br>
-            Path: {idx+1}
+            <b>Vertex:</b> {node_to_index[node]}<br>
+            <b>Node ID:</b> {node}<br>
+            <b>Path:</b> {idx+1}<br>
+            <b>Latitude:</b> {lat:.8f}<br>
+            <b>Longitude:</b> {lon:.8f}
             """
         ).add_to(path_group)
 
@@ -901,6 +978,252 @@ for idx, path in enumerate(paths):
 print("\nCSV exported successfully")
 
 # =========================================================
+# CREATE GRAPH INFO PANEL
+# =========================================================
+
+vertex_info_html = f"""
+<div id="graph-panel" style="
+position: fixed;
+top: 10px;
+right: 10px;
+width: 430px;
+height: 700px;
+z-index:9999;
+background:white;
+border:2px solid black;
+padding:10px;
+font-size:12px;
+font-family:monospace;
+">
+
+<div style="
+display:flex;
+justify-content:space-between;
+align-items:center;
+">
+
+<h2 style="margin:0;">
+GRAPH INFORMATION
+</h2>
+
+<div>
+
+<button onclick="expandPanel()">
++
+</button>
+
+<button onclick="collapsePanel()">
+-
+</button>
+
+</div>
+
+</div>
+
+<div id="graph-content">
+
+<br>
+
+<b>Total Vertices:</b> {len(selected_nodes_list)}<br>
+<b>Total Edges:</b> {len(subgraph.edges)}<br>
+
+<hr>
+
+<h3>VERTICES</h3>
+
+<div style="
+height:250px;
+overflow:auto;
+border:1px solid gray;
+padding:5px;
+">
+
+<pre>
+STT | LATITUDE | LONGITUDE
+"""
+
+for idx, node in enumerate(selected_nodes_list):
+
+    lat = G.nodes[node]["y"]
+    lon = G.nodes[node]["x"]
+
+    vertex_info_html += (
+        f'<span '
+        f'style="cursor:pointer;color:blue;" '
+        f'onclick="focusVertex({idx})">'
+        f'{idx:03d}'
+        f'</span> | '
+        f'{lat:.8f} | '
+        f'{lon:.8f}\n'
+    )
+
+vertex_info_html += """
+</pre>
+
+</div>
+
+<hr>
+
+<h3>EDGES</h3>
+
+<div style="
+height:250px;
+overflow:auto;
+border:1px solid gray;
+padding:5px;
+">
+
+<pre>
+FROM | TO | DISTANCE(m)
+"""
+
+written_edges_panel = set()
+
+for u, v, data in subgraph.edges(data=True):
+
+    edge_key = tuple(sorted((str(u), str(v))))
+
+    if edge_key in written_edges_panel:
+        continue
+
+    written_edges_panel.add(edge_key)
+
+    if (
+        u not in node_to_index
+        or
+        v not in node_to_index
+    ):
+        continue
+
+    u_idx = node_to_index[u]
+    v_idx = node_to_index[v]
+
+    length = float(data.get("length", 0))
+
+    edge_coords = []
+
+    geometry = data.get("geometry", None)
+
+    if geometry is not None:
+
+        for lon, lat in geometry.coords:
+            edge_coords.append([lat, lon])
+
+    else:
+
+        edge_coords = [
+            [G.nodes[u]["y"], G.nodes[u]["x"]],
+            [G.nodes[v]["y"], G.nodes[v]["x"]]
+        ]
+
+    vertex_info_html += (
+        f'<span '
+        f'style="cursor:pointer;color:red;" '
+        f'onclick=\'focusEdge({edge_coords})\'>'
+        f'{u_idx:03d} | {v_idx:03d}'
+        f'</span> | '
+        f'{length:.2f}\n'
+    )
+
+vertex_info_html += """
+</pre>
+
+</div>
+
+<hr>
+
+<h3>DOWNLOAD FILES</h3>
+
+<a href="graph.txt" download>
+<button style="width:100%;padding:8px;">
+Download graph.txt
+</button>
+</a>
+
+<br><br>
+
+<a href="list_vertex/path_1_vertices.csv" download>
+<button style="width:100%;padding:8px;">
+Download vertices CSV
+</button>
+</a>
+
+<br><br>
+
+<a href="list_vertex/path_1_edges.csv" download>
+<button style="width:100%;padding:8px;">
+Download edges CSV
+</button>
+</a>
+
+</div>
+
+<script>
+
+function focusVertex(vertexId) {
+
+    let marker = window["vertex_marker_" + vertexId];
+
+    if (!marker) {
+        return;
+    }
+
+    {map_name}.setView(
+        marker.getLatLng(),
+        18
+    );
+
+    marker.openPopup();
+}
+
+let currentEdge = null;
+
+function focusEdge(coords) {
+
+    if (currentEdge !== null) {
+        {map_name}.removeLayer(currentEdge);
+    }
+
+    currentEdge = L.polyline(coords, {
+        color: 'red',
+        weight: 6,
+        opacity: 0.8,
+        lineJoin: 'round'
+    }).addTo({map_name});
+
+    {map_name}.fitBounds(currentEdge.getBounds(), {padding: [50, 50]});
+}
+
+function collapsePanel() {
+
+    document.getElementById("graph-content").style.display = "none";
+
+    document.getElementById("graph-panel").style.width = "250px";
+
+    document.getElementById("graph-panel").style.height = "60px";
+
+}
+
+function expandPanel() {
+
+    document.getElementById("graph-content").style.display = "block";
+
+    document.getElementById("graph-panel").style.width = "430px";
+
+    document.getElementById("graph-panel").style.height = "700px";
+
+}
+
+</script>
+
+</div>
+"""
+
+m.get_root().html.add_child(
+    folium.Element(vertex_info_html)
+)
+
+# =========================================================
 # SAVE HTML
 # =========================================================
 
@@ -915,3 +1238,76 @@ print(OUTPUT_HTML)
 
 print("\nOpen the HTML file in browser.")
 print("You can zoom, click nodes, and inspect edges.")
+
+# =========================================================
+# EXPORT GRAPH.TXT
+# =========================================================
+
+graph_txt = "graph.txt"
+
+
+# ---------------------------------------------------------
+# WRITE GRAPH
+# ---------------------------------------------------------
+
+with open(graph_txt, "w", encoding="utf-8") as f:
+
+    # -----------------------------------------------------
+    # HEADER
+    # -----------------------------------------------------
+
+    f.write(f"VERTICES {len(selected_nodes_list)}\n\n")
+
+    # -----------------------------------------------------
+    # WRITE ALL VERTICES
+    # -----------------------------------------------------
+
+    for idx, node in enumerate(selected_nodes_list):
+
+        lat = G.nodes[node]["y"]
+        lon = G.nodes[node]["x"]
+
+        f.write(
+            f"{idx} {lat:.8f} {lon:.8f}\n"
+        )
+
+    # -----------------------------------------------------
+    # EDGES
+    # -----------------------------------------------------
+
+    f.write("\nEDGES\n\n")
+
+    written_edges = set()
+
+    for u, v, data in subgraph.edges(data=True):
+
+        # avoid duplicate edges
+        edge_key = tuple(sorted((str(u), str(v))))
+
+        if edge_key in written_edges:
+            continue
+
+        written_edges.add(edge_key)
+
+        # only export edges between selected nodes
+        if (
+            u not in node_to_index
+            or
+            v not in node_to_index
+        ):
+            continue
+
+        u_idx = node_to_index[u]
+        v_idx = node_to_index[v]
+
+        length = float(
+            data.get("length", 0)
+        )
+
+        f.write(
+            f"{u_idx} "
+            f"{v_idx} "
+            f"{length:.2f}\n"
+        )
+
+print("\ngraph.txt exported successfully")

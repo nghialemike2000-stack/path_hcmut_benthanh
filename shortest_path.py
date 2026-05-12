@@ -502,6 +502,7 @@ m = folium.Map(
     tiles="OpenStreetMap"
 )
 
+map_name = m.get_name()
 # =========================================================
 # MARK MAIN LOCATIONS
 # =========================================================
@@ -529,7 +530,7 @@ for node in selected_nodes:
 
     street_count = G.nodes[node].get("street_count", 0)
 
-    folium.CircleMarker(
+    vertex_marker = folium.CircleMarker(
 
         location=[lat, lon],
 
@@ -554,7 +555,20 @@ for node in selected_nodes:
             sticky=True
         )
 
-    ).add_to(m)
+    )
+    vertex_marker.add_to(m)
+
+    marker_name = f"vertex_marker_{node_to_index[node]}"
+
+    vertex_marker._name = marker_name
+
+    m.get_root().script.add_child(
+        folium.Element(
+            f"""
+            window.{marker_name} = {vertex_marker.get_name()};
+            """
+        )
+)
 
     
 
@@ -709,8 +723,11 @@ for idx, path in enumerate(paths):
             fill_opacity=1.0,
 
             popup=f"""
-            Node: {node}<br>
-            Path: {idx+1}
+            <b>Vertex:</b> {node_to_index[node]}<br>
+            <b>Node ID:</b> {node}<br>
+            <b>Path:</b> {idx+1}<br>
+            <b>Latitude:</b> {lat:.8f}<br>
+            <b>Longitude:</b> {lon:.8f}
             """
         ).add_to(path_group)
 
@@ -1040,9 +1057,13 @@ for idx, node in enumerate(selected_nodes_list):
     lon = G.nodes[node]["x"]
 
     vertex_info_html += (
-        f"{idx:03d} | "
-        f"{lat:.8f} | "
-        f"{lon:.8f}\n"
+        f'<span '
+        f'style="cursor:pointer;color:blue;" '
+        f'onclick="focusVertex({idx})">'
+        f'{idx:03d}'
+        f'</span> | '
+        f'{lat:.8f} | '
+        f'{lon:.8f}\n'
     )
 
 vertex_info_html += """
@@ -1088,10 +1109,29 @@ for u, v, data in subgraph.edges(data=True):
 
     length = float(data.get("length", 0))
 
+    edge_coords = []
+
+    geometry = data.get("geometry", None)
+
+    if geometry is not None:
+
+        for lon, lat in geometry.coords:
+            edge_coords.append([lat, lon])
+
+    else:
+
+        edge_coords = [
+            [G.nodes[u]["y"], G.nodes[u]["x"]],
+            [G.nodes[v]["y"], G.nodes[v]["x"]]
+        ]
+
     vertex_info_html += (
-        f"{u_idx:03d} | "
-        f"{v_idx:03d} | "
-        f"{length:.2f}\n"
+        f'<span '
+        f'style="cursor:pointer;color:red;" '
+        f'onclick=\'focusEdge({edge_coords})\'>'
+        f'{u_idx:03d} | {v_idx:03d}'
+        f'</span> | '
+        f'{length:.2f}\n'
     )
 
 vertex_info_html += """
@@ -1128,6 +1168,44 @@ Download edges CSV
 </div>
 
 <script>
+
+function focusVertex(vertexId) {
+
+    let marker = window["vertex_marker_" + vertexId];
+
+    if (!marker) {
+        return;
+    }
+
+    {map_name}.setView(
+        marker.getLatLng(),
+        18
+    );
+
+    marker.openTooltip();
+}
+
+let currentEdge = null;
+
+function focusEdge(coords) {
+
+    if (currentEdge !== null) {
+        {map_name}.removeLayer(currentEdge);
+    }
+
+    currentEdge = L.polyline(
+        coords,
+        {
+            color: 'yellow',
+            weight: 8,
+            opacity: 1
+        }
+    ).addTo({map_name});
+
+    map.fitBounds(
+        currentEdge.getBounds()
+    );
+}
 
 function collapsePanel() {
 
