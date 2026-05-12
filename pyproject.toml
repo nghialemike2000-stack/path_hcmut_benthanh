@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hcmut-paths"
+version = "0.1.0"
+description = "Route graph and Folium map generation between HCMUT and Ben Thanh."
+requires-python = ">=3.11"
+dependencies = [
+    "folium",
+    "geopy",
+    "networkx",
+    "osmnx",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+hcmut_paths = [
+    "ui/templates/*.html",
+    "ui/assets/css/*.css",
+    "ui/assets/js/*.js",
+]

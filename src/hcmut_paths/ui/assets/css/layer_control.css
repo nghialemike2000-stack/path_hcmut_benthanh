@@ -1,0 +1,7 @@
+.leaflet-control-layers-list {
+    max-height: 250px;
+    overflow-y: auto;
+    overflow-x: auto;
+    width: 300px;
+}
+

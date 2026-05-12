@@ -1,0 +1,82 @@
+{{ GRAPH_PANEL_CSS }}
+
+<div id="graph-panel" class="graph-panel">
+    <div class="graph-panel__header">
+        <h2 class="graph-panel__title">GRAPH INFORMATION</h2>
+
+        <div class="graph-panel__actions">
+            <button
+                id="graph-panel-expand"
+                class="graph-panel__button"
+                type="button"
+                aria-label="Expand graph information panel"
+            >
+                +
+            </button>
+
+            <button
+                id="graph-panel-collapse"
+                class="graph-panel__button"
+                type="button"
+                aria-label="Collapse graph information panel"
+            >
+                -
+            </button>
+        </div>
+    </div>
+
+    <div id="graph-content">
+        <br>
+
+        <b>Total Vertices:</b> {{ TOTAL_VERTICES }}<br>
+        <b>Total Edges:</b> {{ TOTAL_EDGES }}<br>
+
+        <hr>
+
+        <h3>VERTICES</h3>
+
+        <div class="graph-panel__scroll-box">
+<pre>STT | LATITUDE | LONGITUDE
+{{ VERTEX_ROWS }}</pre>
+        </div>
+
+        <hr>
+
+        <h3>EDGES</h3>
+
+        <div class="graph-panel__scroll-box">
+<pre>FROM | TO | DISTANCE(m)
+{{ EDGE_ROWS }}</pre>
+        </div>
+
+        <hr>
+
+        <h3>DOWNLOAD FILES</h3>
+
+        <a href="graph.txt" download>
+            <button class="graph-panel__download-button" type="button">
+                Download graph.txt
+            </button>
+        </a>
+
+        <br><br>
+
+        <a href="list_vertex/path_1_vertices.csv" download>
+            <button class="graph-panel__download-button" type="button">
+                Download vertices CSV
+            </button>
+        </a>
+
+        <br><br>
+
+        <a href="list_vertex/path_1_edges.csv" download>
+            <button class="graph-panel__download-button" type="button">
+                Download edges CSV
+            </button>
+        </a>
+    </div>
+
+    {{ MAP_INTERACTIONS_JS }}
+    {{ GRAPH_PANEL_JS }}
+</div>
+

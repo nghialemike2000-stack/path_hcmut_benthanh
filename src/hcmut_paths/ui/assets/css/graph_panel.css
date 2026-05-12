@@ -1,0 +1,58 @@
+.graph-panel {
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    width: 430px;
+    height: 700px;
+    z-index: 9999;
+    background: white;
+    border: 2px solid black;
+    padding: 10px;
+    font-size: 12px;
+    font-family: monospace;
+}
+
+.graph-panel__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.graph-panel__title {
+    margin: 0;
+}
+
+.graph-panel__actions {
+    display: flex;
+    gap: 4px;
+}
+
+.graph-panel__button {
+    width: 30px;
+    height: 30px;
+    font-size: 18px;
+    cursor: pointer;
+}
+
+.graph-panel__scroll-box {
+    height: 250px;
+    overflow: auto;
+    border: 1px solid gray;
+    padding: 5px;
+}
+
+.graph-panel__vertex {
+    cursor: pointer;
+    color: blue;
+}
+
+.graph-panel__edge {
+    cursor: pointer;
+    color: red;
+}
+
+.graph-panel__download-button {
+    width: 100%;
+    padding: 8px;
+}
+
