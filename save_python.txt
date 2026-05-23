@@ -898,6 +898,22 @@ class RouteMapPipeline:
 
         explanation_lines.append(f"Execution Time = {execution_ms:.2f} ms")
 
+        explanation_lines.append(f"Total paths found: {len(paths)}")
+        explanation_lines.append("")
+
+        for idx, path in enumerate(paths):
+            length = lengths[idx]
+            explanation_lines.append(f"Path [{idx}] - {length / 1000:.3f} km")
+            explanation_lines.append(
+                display_path(
+                    path,
+                    node_to_index,
+                    directed_graph,
+                    real_node_labels,
+                )
+            )
+            explanation_lines.append("")
+            
         with open(
             "shortest_path_yen_algorithms_heapify.txt",
             "w",
@@ -1092,7 +1108,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-MAX_PATHS = 5
+MAX_PATHS = 3
 
 @dataclass(frozen=True)
 class AppSettings:

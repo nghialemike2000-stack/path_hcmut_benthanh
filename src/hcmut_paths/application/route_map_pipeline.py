@@ -1,4 +1,5 @@
 from __future__ import annotations
+from pathlib import Path
 
 from hcmut_paths.algorithms.gate_selector import find_best_gate_pair
 from hcmut_paths.algorithms.k_shortest_paths import (
@@ -36,6 +37,7 @@ from hcmut_paths.rendering.layer_control_renderer import (
 from hcmut_paths.rendering.location_marker_renderer import render_main_location_markers
 from hcmut_paths.rendering.path_layer_renderer import render_path_layers
 from hcmut_paths.rendering.vertex_renderer import render_selected_vertices
+from hcmut_paths.exporters.graph_csv_exporter import export_graph_csv
 import time
 
 
@@ -528,6 +530,12 @@ class RouteMapPipeline:
 
         print("\ngraph.txt exported successfully")
 
+        export_graph_csv(
+            self.settings.graph_txt_path,
+            Path("graph_csv_output"),
+        )
+
+        print("CSV graph exported successfully")
         return PipelineResult(
             html_path=self.settings.output_html,
             graph_txt_path=self.settings.graph_txt_path,
