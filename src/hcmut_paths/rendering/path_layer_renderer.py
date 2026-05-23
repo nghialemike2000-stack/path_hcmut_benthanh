@@ -99,7 +99,6 @@ def _render_path_nodes(
             "ui/templates/popup_path_node.html",
             {
                 "VERTEX_ID": str(node_to_index[node]),
-                "NODE_ID": str(node),
                 "PATH_NUMBER": str(path_number),
                 "LATITUDE": f"{lat:.8f}",
                 "LONGITUDE": f"{lon:.8f}",

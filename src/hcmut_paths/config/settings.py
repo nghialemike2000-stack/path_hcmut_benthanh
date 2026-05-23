@@ -3,10 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+MAX_PATHS = 5
 
 @dataclass(frozen=True)
 class AppSettings:
-    k_paths: int = 30
+    k_paths: int = MAX_PATHS
     target_vertices: int = 100
     min_length_threshold_m: float = 0
     network_type: str = "drive"

@@ -4,6 +4,7 @@ from hcmut_paths.algorithms.gate_selector import find_best_gate_pair
 from hcmut_paths.algorithms.k_shortest_paths import (
     find_k_shortest_paths,
     route_lengths,
+    display_path,
 )
 from hcmut_paths.config.gates import (
     BACH_KHOA_GATES,
@@ -35,6 +36,7 @@ from hcmut_paths.rendering.layer_control_renderer import (
 from hcmut_paths.rendering.location_marker_renderer import render_main_location_markers
 from hcmut_paths.rendering.path_layer_renderer import render_path_layers
 from hcmut_paths.rendering.vertex_renderer import render_selected_vertices
+import time
 
 
 class RouteMapPipeline:
@@ -94,6 +96,9 @@ class RouteMapPipeline:
         origin = nearest_node(graph, bach_khoa_coordinate)
         destination = nearest_node(graph, ben_thanh_coordinate)
 
+        real_origin_node = origin
+        real_destination_node = destination
+
         print(f"\nOrigin node: {origin}")
         print(f"Destination node: {destination}")
 
@@ -116,28 +121,48 @@ class RouteMapPipeline:
             f"{connector_result.destination_connector_length_m:.2f} meters"
         )
 
+        print("\n================================")
+        print("FINAL REAL DISTANCE")
+        print("================================")
+
+        real_distance = (
+            gate_selection.distance_m
+            + connector_result.origin_connector_length_m
+            + connector_result.destination_connector_length_m
+        )
+
+        print(f"Road distance : " f"{gate_selection.distance_m / 1000:.2f} km")
+
+        print(
+            f"Connector distance : "
+            f"{(connector_result.origin_connector_length_m + connector_result.destination_connector_length_m)/1000:.2f} km"
+        )
+
+        print(f"Final distance : " f"{real_distance / 1000:.2f} km")
+
         directed_graph = to_weighted_digraph(graph)
         origin = connector_result.origin_gate_node
         destination = connector_result.destination_gate_node
 
         print(f"\nFinding {self.settings.k_paths} shortest paths...")
 
-        paths = find_k_shortest_paths(
+        start_time = time.perf_counter()
+
+        paths, explanation_data, execution_ms = find_k_shortest_paths(
             directed_graph,
             origin,
             destination,
             self.settings.k_paths,
+            {},
         )
+
+        end_time = time.perf_counter()
+
+        print(f"\nYen execution time: " f"{(end_time - start_time)*1000:.2f} ms")
 
         print(f"Found {len(paths)} paths")
 
         lengths = route_lengths(directed_graph, paths)
-
-        for idx, path in enumerate(paths):
-            length = lengths[idx]
-            print(f"\nPath {idx+1}")
-            print(f"Distance: {length / 1000:.2f} km")
-            print(f"Vertices: {len(path)}")
 
         selected_nodes = collect_route_nodes(paths)
 
@@ -156,13 +181,266 @@ class RouteMapPipeline:
             )
 
         print(f"\nSelected vertices: {len(selected_nodes)}")
+        selected_nodes_list, node_to_index = build_node_index(selected_nodes)
+
+        real_node_labels = {
+            "HCMUT_GATE": node_to_index.get(real_origin_node),
+            "BEN_THANH_GATE": node_to_index.get(real_destination_node),
+        }
+
+        print("\n================================")
+        print("VERTEX TABLE")
+        print("================================")
+
+        vertex_lines = []
+
+        for node in selected_nodes_list:
+
+            idx = node_to_index[node]
+
+            lat = graph.nodes[node]["y"]
+            lon = graph.nodes[node]["x"]
+
+            line = f"Vertex {idx}: " f"lat={lat:.8f}, " f"lon={lon:.8f}"
+
+            print(line)
+
+            vertex_lines.append(line)
+
+        with open(
+            "vertex_table.txt",
+            "w",
+            encoding="utf-8",
+        ) as file:
+
+            file.write("\n".join(vertex_lines))
+
+        explanation_lines = []
+
+        explanation_lines.append(
+            f"K shortest paths requested = {self.settings.k_paths}"
+        )
+
+        explanation_lines.append("")
+
+        for item in explanation_data:
+
+            if item["type"] == "initial":
+
+                explanation_lines.append("========================================")
+
+                explanation_lines.append("STEP 1")
+
+                explanation_lines.append("========================================")
+
+                explanation_lines.append("Initial shortest path:")
+
+                explanation_lines.append(
+                    display_path(
+                        item["path"],
+                        node_to_index,
+                        directed_graph,
+                        real_node_labels,
+                    )
+                )
+
+                explanation_lines.append(f"Cost = {item['cost']/1000:.3f} km")
+
+                explanation_lines.append("")
+
+                explanation_lines.append(f"Total edges = {len(item['path']) - 1}")
+
+                explanation_lines.append("")
+
+                explanation_lines.append(
+                    "Yen Algorithm now cuts each edge one-by-one to generate alternative paths."
+                )
+
+                explanation_lines.append("")
+
+            elif item["type"] == "iteration":
+
+                explanation_lines.append("========================================")
+
+                explanation_lines.append(f"ITERATION {item['iteration']}")
+
+                remaining_k = self.settings.k_paths - item["iteration"]
+
+                explanation_lines.append(
+                    f"Searching for path K = {item['iteration'] + 1}"
+                )
+
+                explanation_lines.append(f"Remaining paths to discover = {remaining_k}")
+
+                explanation_lines.append(
+                    "Yen algorithm removes one edge from the previous shortest path to generate alternative candidates."
+                )
+
+                explanation_lines.append("========================================")
+
+                explanation_lines.append("")
+
+                for spur in item["spur_operations"]:
+
+                    explanation_lines.append(f"SPUR EDGE INDEX = {spur['spur_index']}")
+
+                    if spur.get("failed"):
+
+                        explanation_lines.append("No valid spur path found.")
+
+                        explanation_lines.append("")
+                        continue
+
+                    explanation_lines.append("Root path:")
+
+                    explanation_lines.append(
+                        display_path(
+                            spur["root_path"],
+                            node_to_index,
+                            directed_graph,
+                            real_node_labels,
+                        )
+                    )
+
+                    explanation_lines.append("")
+
+                    explanation_lines.append("Candidate path:")
+
+                    explanation_lines.append(
+                        display_path(
+                            spur["candidate_path"],
+                            node_to_index,
+                            directed_graph,
+                            real_node_labels,
+                        )
+                    )
+
+                    explanation_lines.append("")
+
+                    explanation_lines.append(
+                        f"Candidate cost = {spur['candidate_cost']/1000:.3f} km"
+                    )
+
+                    explanation_lines.append("")
+
+                    if spur["inserted"]:
+
+                        explanation_lines.append("Inserted into heap.")
+
+                    else:
+
+                        explanation_lines.append("Ignored because path already exists.")
+
+                    explanation_lines.append("")
+
+                    explanation_lines.append(f"Heap size = {spur['heap_size']}")
+
+                    explanation_lines.append("")
+
+                    explanation_lines.append("Current heap:")
+
+                    for heap_item in spur["heap_snapshot"]:
+
+                        explanation_lines.append(
+                            f"[{heap_item['heap_index']}] "
+                            f"{heap_item['cost']/1000:.3f} km"
+                        )
+
+                        explanation_lines.append(
+                            display_path(
+                                heap_item["path"],
+                                node_to_index,
+                                directed_graph,
+                                real_node_labels,
+                            )
+                        )
+
+                    explanation_lines.append("")
+
+            elif item["type"] == "selected":
+
+                explanation_lines.append("========================================")
+
+                explanation_lines.append(
+                    f"SELECTED PATH FOR K = {item['iteration'] + 1}"
+                )
+
+                explanation_lines.append("========================================")
+
+                explanation_lines.append(
+                    display_path(
+                        item["path"],
+                        node_to_index,
+                        directed_graph,
+                        real_node_labels,
+                    )
+                )
+
+                explanation_lines.append(f"Cost = {item['cost']/1000:.3f} km")
+
+                explanation_lines.append(f"Remaining heap = {item['heap_remaining']}")
+
+                explanation_lines.append("")
+
+        explanation_lines.append("========================================")
+
+        explanation_lines.append("FINAL SUMMARY")
+
+        explanation_lines.append("========================================")
+
+        explanation_lines.append(f"Execution Time = {execution_ms:.2f} ms")
+
+        explanation_lines.append(f"Total paths found: {len(paths)}")
+        explanation_lines.append("")
+
+        for idx, path in enumerate(paths):
+            length = lengths[idx]
+            explanation_lines.append(f"Path [{idx}] - {length / 1000:.3f} km")
+            explanation_lines.append(
+                display_path(
+                    path,
+                    node_to_index,
+                    directed_graph,
+                    real_node_labels,
+                )
+            )
+            explanation_lines.append("")
+            
+        with open(
+            "shortest_path_yen_algorithms_heapify.txt",
+            "w",
+            encoding="utf-8",
+        ) as file:
+
+            file.write("\n".join(explanation_lines))
+
+        for idx, path in enumerate(paths):
+
+            length = lengths[idx]
+
+            print(f"\n================================")
+            print(f"Path {idx+1}")
+            print(f"================================")
+
+            print(f"Distance: {length / 1000:.2f} km")
+
+            print(f"Vertices: {len(path)}")
+
+            print("Route:")
+
+            print(
+                display_path(
+                    path,
+                    node_to_index,
+                    directed_graph,
+                    real_node_labels,
+                )
+            )
 
         subgraph = build_subgraph(graph, selected_nodes)
 
         print(f"Subgraph nodes: {len(subgraph.nodes)}")
         print(f"Subgraph edges: {len(subgraph.edges)}")
-
-        selected_nodes_list, node_to_index = build_node_index(selected_nodes)
 
         center = Coordinate(
             lat=(ben_thanh_coordinate.lat + bach_khoa_coordinate.lat) / 2,

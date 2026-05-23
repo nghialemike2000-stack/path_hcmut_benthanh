@@ -1,0 +1,2376 @@
+Exception calling "WriteAllText" with "3" argument(s): "The process cannot access the file 'D:\B ch khoa\Math\Th?y 
+Tu?n Anh\Path Ben Thanh - HCMUT\save_python.txt' because it is being used by another process."
+At line:1 char:1
++ [System.IO.File]::WriteAllText('save_python.txt', '', (New-Object Sys ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:) [], MethodInvocationException
+    + FullyQualifiedErrorId : IOException
+ 
+==================================================
+FILE: shortest_path.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\shortest_path.py
+==================================================
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+SRC_ROOT = PROJECT_ROOT / "src"
+
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
+from hcmut_paths.config.settings import AppSettings
+from hcmut_paths.application.route_map_pipeline import RouteMapPipeline
+
+
+def main() -> None:
+    settings = AppSettings.default()
+    pipeline = RouteMapPipeline(settings=settings)
+    pipeline.run()
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+==================================================
+FILE: __init__.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\__init__.py
+==================================================
+.
+"""HCMUT to Ben Thanh route mapping package."""
+
+
+
+.
+.
+==================================================
+FILE: gate_selector.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\algorithms\gate_selector.py
+==================================================
+.
+from __future__ import annotations
+
+from typing import Any
+
+import networkx as nx
+import osmnx as ox
+
+from hcmut_paths.domain.models import Coordinate, GateDistanceAttempt, GateSelection
+
+
+def find_best_gate_pair(
+    graph: Any,
+    directed_graph: Any,
+    start_gates: dict[str, Coordinate],
+    end_gates: dict[str, Coordinate],
+) -> tuple[GateSelection, list[GateDistanceAttempt]]:
+    best_distance = float("inf")
+    best_start_gate: str | None = None
+    best_end_gate: str | None = None
+    best_origin_node = None
+    best_destination_node = None
+    attempts: list[GateDistanceAttempt] = []
+
+    for start_name, start_point in start_gates.items():
+        for end_name, end_point in end_gates.items():
+            try:
+                temp_origin = ox.nearest_nodes(
+                    graph,
+                    X=start_point.lon,
+                    Y=start_point.lat,
+                )
+                temp_destination = ox.nearest_nodes(
+                    graph,
+                    X=end_point.lon,
+                    Y=end_point.lat,
+                )
+                temp_distance = nx.shortest_path_length(
+                    directed_graph,
+                    temp_origin,
+                    temp_destination,
+                    weight="length",
+                )
+
+                attempts.append(
+                    GateDistanceAttempt(
+                        start_gate=start_name,
+                        end_gate=end_name,
+                        distance_m=temp_distance,
+                    )
+                )
+
+                if temp_distance < best_distance:
+                    best_distance = temp_distance
+                    best_start_gate = start_name
+                    best_end_gate = end_name
+                    best_origin_node = temp_origin
+                    best_destination_node = temp_destination
+
+            except Exception:
+                attempts.append(
+                    GateDistanceAttempt(
+                        start_gate=start_name,
+                        end_gate=end_name,
+                        skipped=True,
+                    )
+                )
+
+    if (
+        best_start_gate is None
+        or best_end_gate is None
+        or best_origin_node is None
+        or best_destination_node is None
+    ):
+        raise RuntimeError("No valid gate pair found")
+
+    return (
+        GateSelection(
+            start_gate=best_start_gate,
+            end_gate=best_end_gate,
+            origin_node=best_origin_node,
+            destination_node=best_destination_node,
+            distance_m=best_distance,
+        ),
+        attempts,
+    )
+
+
+
+.
+.
+==================================================
+FILE: k_shortest_paths.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\algorithms\k_shortest_paths.py
+==================================================
+.
+from __future__ import annotations
+
+from itertools import islice
+from typing import Any
+
+import networkx as nx
+
+from hcmut_paths.domain.types import NodeId
+from hcmut_paths.algorithms.yen_algorithm import yen_k_shortest_paths
+
+
+def find_k_shortest_paths(
+    directed_graph: Any,
+    origin: NodeId,
+    destination: NodeId,
+    k_paths: int,
+    node_to_index: dict[NodeId, int],
+) -> tuple[
+    list[list[NodeId]],
+    list[dict],
+    float,
+]:
+    paths, explanation_data, execution_ms = yen_k_shortest_paths(
+        directed_graph,
+        origin,
+        destination,
+        k_paths,
+    )
+
+    return (
+        list(islice(paths, k_paths)),
+        explanation_data,
+        execution_ms,
+    )
+
+
+def route_length(directed_graph: Any, route: list[NodeId]) -> float:
+    total = 0.0
+
+    for u, v in zip(route[:-1], route[1:]):
+        total += directed_graph.edges[u, v]["length"]
+
+    return total
+
+
+def route_lengths(directed_graph: Any, paths: list[list[NodeId]]) -> list[float]:
+    return [route_length(directed_graph, path) for path in paths]
+
+
+def display_path(
+    path: list[NodeId],
+    node_to_index: dict[NodeId, int],
+    graph=None,
+    real_node_labels: dict[NodeId, int] | None = None,
+) -> str:
+
+    labels = []
+
+    for idx, node in enumerate(path):
+
+        if node == "HCMUT_GATE":
+
+            # Look up the gate's own unique vertex index instead of its neighbor's
+            gate_id = node_to_index.get(node)
+
+            current_label = f"(HCMUT)({gate_id})" if gate_id is not None else "(HCMUT)"
+
+        elif node == "BEN_THANH_GATE":
+
+            # Look up the gate's own unique vertex index instead of its neighbor's
+            gate_id = node_to_index.get(node)
+
+            current_label = (
+                f"(Ben Thanh)({gate_id})" if gate_id is not None else "(Ben Thanh)"
+            )
+
+        else:
+
+            if node not in node_to_index:
+                continue
+
+            current_label = str(node_to_index[node])
+
+        labels.append(current_label)
+
+        if idx < len(path) - 1 and graph is not None:
+
+            u = path[idx]
+            v = path[idx + 1]
+
+            if graph.has_edge(u, v):
+
+                dist = graph[u][v]["length"] / 1000
+
+                labels.append(f"-({dist:.3f} km)->")
+
+    return " ".join(labels)
+
+
+.
+.
+==================================================
+FILE: yen_algorithm.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\algorithms\yen_algorithm.py
+==================================================
+.
+from __future__ import annotations
+
+import heapq
+import time
+import networkx as nx
+
+
+def edge_distance(graph, u, v):
+
+    return graph[u][v]["length"] / 1000
+
+
+def path_cost(graph, path):
+
+    total = 0
+
+    for u, v in zip(path[:-1], path[1:]):
+        total += graph[u][v]["length"]
+
+    return total
+
+
+def detailed_path(graph, path):
+
+    output = []
+
+    for u, v in zip(path[:-1], path[1:]):
+
+        dist = edge_distance(graph, u, v)
+
+        output.append(
+            (u, v, dist)
+        )
+
+    return output
+
+
+def yen_k_shortest_paths(
+    graph,
+    source,
+    target,
+    k,
+):
+
+    start_time = time.perf_counter()
+
+    explanation_data = []
+
+    shortest_path = nx.dijkstra_path(
+        graph,
+        source,
+        target,
+        weight="length",
+    )
+
+    A = [shortest_path]
+
+    B = []
+
+    explanation_data.append(
+        {
+            "type": "initial",
+            "path": shortest_path,
+            "cost": path_cost(graph, shortest_path),
+            "edges": detailed_path(
+                graph,
+                shortest_path,
+            ),
+        }
+    )
+
+    for kth in range(1, k):
+
+        previous_path = A[-1]
+
+        iteration_data = {
+            "type": "iteration",
+            "iteration": kth,
+            "spur_operations": [],
+        }
+
+        for i in range(len(previous_path) - 1):
+
+            spur_node = previous_path[i]
+
+            root_path = previous_path[: i + 1]
+
+            graph_copy = graph.copy()
+
+            removed_edges = []
+
+            for path in A:
+
+                if (
+                    len(path) > i
+                    and path[: i + 1] == root_path
+                ):
+
+                    u = path[i]
+                    v = path[i + 1]
+
+                    if graph_copy.has_edge(u, v):
+
+                        graph_copy.remove_edge(u, v)
+
+                        removed_edges.append((u, v))
+
+            try:
+
+                spur_path = nx.dijkstra_path(
+                    graph_copy,
+                    spur_node,
+                    target,
+                    weight="length",
+                )
+
+                total_path = root_path[:-1] + spur_path
+
+                if len(total_path) != len(set(total_path)):
+                    continue
+
+                total_cost = path_cost(
+                    graph,
+                    total_path,
+                )
+
+                candidate_exists = any(
+                    heap_item[1] == total_path
+                    for heap_item in B
+                )
+
+                accepted_exists = any(
+                    accepted_path == total_path
+                    for accepted_path in A
+                )
+
+                inserted = False
+
+                if (
+                    not candidate_exists
+                    and not accepted_exists
+                ):
+
+                    heapq.heappush(
+                        B,
+                        (
+                            total_cost,
+                            total_path,
+                            spur_node,
+                            root_path,
+                        ),
+                    )
+
+                    inserted = True
+                    remaining_needed = k - len(A)
+                    if len(B) > remaining_needed:
+                        B = heapq.nsmallest(remaining_needed, B)
+                        heapq.heapify(B)
+
+                heap_snapshot = []
+
+                for idx, heap_item in enumerate(sorted(B)):
+
+                    heap_snapshot.append(
+                        {
+                            "heap_index": idx,
+                            "cost": heap_item[0],
+                            "path": heap_item[1],
+                        }
+                    )
+
+                iteration_data["spur_operations"].append(
+                    {
+                        "spur_index": i,
+                        "spur_node": spur_node,
+                        "root_path": root_path,
+                        "candidate_path": total_path,
+                        "candidate_cost": total_cost,
+                        "inserted": inserted,
+                        "heap_size": len(B),
+                        "heap_snapshot": heap_snapshot,
+                        "edges": detailed_path(
+                            graph,
+                            total_path,
+                        ),
+                    }
+                )
+
+            except nx.NetworkXNoPath:
+
+                iteration_data["spur_operations"].append(
+                    {
+                        "spur_index": i,
+                        "spur_node": spur_node,
+                        "root_path": root_path,
+                        "failed": True,
+                    }
+                )
+
+        explanation_data.append(iteration_data)
+
+        if not B:
+            break
+
+        (
+            best_cost,
+            best_candidate,
+            best_spur_node,
+            best_root_path,
+        ) = heapq.heappop(B)
+
+        A.append(best_candidate)
+
+        explanation_data.append(
+            {
+                "type": "selected",
+                "iteration": kth,
+                "path": best_candidate,
+                "cost": best_cost,
+                "heap_remaining": len(B),
+            }
+        )
+
+    execution_ms = (
+        time.perf_counter() - start_time
+    ) * 1000
+
+    return (
+        A,
+        explanation_data,
+        execution_ms,
+    )
+
+.
+.
+==================================================
+FILE: __init__.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\algorithms\__init__.py
+==================================================
+.
+"""Routing and path-finding algorithms."""
+
+
+
+.
+.
+==================================================
+FILE: route_map_pipeline.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\application\route_map_pipeline.py
+==================================================
+.
+from __future__ import annotations
+
+from hcmut_paths.algorithms.gate_selector import find_best_gate_pair
+from hcmut_paths.algorithms.k_shortest_paths import (
+    find_k_shortest_paths,
+    route_lengths,
+    display_path,
+)
+from hcmut_paths.config.gates import (
+    BACH_KHOA_GATES,
+    BEN_THANH_GATES,
+    GATE_DISPLAY_NAMES,
+    initial_bbox_coordinates,
+)
+from hcmut_paths.config.settings import AppSettings
+from hcmut_paths.domain.models import Coordinate, PipelineResult
+from hcmut_paths.exporters.graph_txt_exporter import export_graph_txt
+from hcmut_paths.exporters.html_exporter import export_html_map
+from hcmut_paths.exporters.path_csv_exporter import export_path_csv_files
+from hcmut_paths.graph.directed_graph_builder import to_weighted_digraph
+from hcmut_paths.graph.gate_connector import connect_gate_nodes, nearest_node
+from hcmut_paths.graph.node_indexer import build_node_index
+from hcmut_paths.graph.osm_loader import build_bbox, load_consolidated_graph
+from hcmut_paths.graph.subgraph_builder import (
+    add_nearby_intersections,
+    build_subgraph,
+    collect_route_nodes,
+)
+from hcmut_paths.rendering.edge_renderer import render_subgraph_edges
+from hcmut_paths.rendering.folium_map_factory import create_base_map
+from hcmut_paths.rendering.graph_panel_renderer import render_graph_info_panel
+from hcmut_paths.rendering.layer_control_renderer import (
+    inject_layer_control_styles,
+    render_layer_control,
+)
+from hcmut_paths.rendering.location_marker_renderer import render_main_location_markers
+from hcmut_paths.rendering.path_layer_renderer import render_path_layers
+from hcmut_paths.rendering.vertex_renderer import render_selected_vertices
+import time
+
+
+class RouteMapPipeline:
+    def __init__(self, settings: AppSettings) -> None:
+        self.settings = settings
+
+    def run(self) -> PipelineResult:
+        initial_bach_khoa, initial_ben_thanh = initial_bbox_coordinates()
+        bbox = build_bbox(
+            initial_bach_khoa,
+            initial_ben_thanh,
+            self.settings.lat_padding,
+            self.settings.lon_padding,
+        )
+
+        print("Downloading map data...")
+        print("Downloading and consolidating map data...")
+
+        graph = load_consolidated_graph(
+            bbox,
+            self.settings.custom_filter,
+            self.settings.intersection_tolerance_m,
+        )
+
+        print(f"Consolidated graph loaded:")
+        print(f"Nodes: {len(graph.nodes)}")
+        print(f"Edges: {len(graph.edges)}")
+
+        directed_graph = to_weighted_digraph(graph)
+
+        gate_selection, attempts = find_best_gate_pair(
+            graph,
+            directed_graph,
+            BACH_KHOA_GATES,
+            BEN_THANH_GATES,
+        )
+
+        for attempt in attempts:
+            if attempt.skipped:
+                print(f"Skip {attempt.start_gate} -> {attempt.end_gate}")
+            else:
+                print(
+                    f"{attempt.start_gate} -> {attempt.end_gate} "
+                    f"= {attempt.distance_m / 1000:.2f} km"
+                )
+
+        print("\n================================")
+        print("BEST GATE COMBINATION")
+        print("================================")
+        print(f"HCMUT : {gate_selection.start_gate}")
+        print(f"Ben Thanh : {gate_selection.end_gate}")
+        print(f"Distance : {gate_selection.distance_m/1000:.2f} km")
+
+        bach_khoa_coordinate = BACH_KHOA_GATES[gate_selection.start_gate]
+        ben_thanh_coordinate = BEN_THANH_GATES[gate_selection.end_gate]
+
+        origin = nearest_node(graph, bach_khoa_coordinate)
+        destination = nearest_node(graph, ben_thanh_coordinate)
+
+        real_origin_node = origin
+        real_destination_node = destination
+
+        print(f"\nOrigin node: {origin}")
+        print(f"Destination node: {destination}")
+
+        connector_result = connect_gate_nodes(
+            graph,
+            origin,
+            destination,
+            bach_khoa_coordinate,
+            ben_thanh_coordinate,
+            self.settings.origin_gate_node,
+            self.settings.destination_gate_node,
+        )
+
+        print(
+            f"HCMUT gate connector = "
+            f"{connector_result.origin_connector_length_m:.2f} meters"
+        )
+        print(
+            f"Ben Thanh connector = "
+            f"{connector_result.destination_connector_length_m:.2f} meters"
+        )
+
+        print("\n================================")
+        print("FINAL REAL DISTANCE")
+        print("================================")
+
+        real_distance = (
+            gate_selection.distance_m
+            + connector_result.origin_connector_length_m
+            + connector_result.destination_connector_length_m
+        )
+
+        print(f"Road distance : " f"{gate_selection.distance_m / 1000:.2f} km")
+
+        print(
+            f"Connector distance : "
+            f"{(connector_result.origin_connector_length_m + connector_result.destination_connector_length_m)/1000:.2f} km"
+        )
+
+        print(f"Final distance : " f"{real_distance / 1000:.2f} km")
+
+        directed_graph = to_weighted_digraph(graph)
+        origin = connector_result.origin_gate_node
+        destination = connector_result.destination_gate_node
+
+        print(f"\nFinding {self.settings.k_paths} shortest paths...")
+
+        start_time = time.perf_counter()
+
+        paths, explanation_data, execution_ms = find_k_shortest_paths(
+            directed_graph,
+            origin,
+            destination,
+            self.settings.k_paths,
+            {},
+        )
+
+        end_time = time.perf_counter()
+
+        print(f"\nYen execution time: " f"{(end_time - start_time)*1000:.2f} ms")
+
+        print(f"Found {len(paths)} paths")
+
+        lengths = route_lengths(directed_graph, paths)
+
+        selected_nodes = collect_route_nodes(paths)
+
+        if len(selected_nodes) < self.settings.target_vertices:
+            print(
+                f"\nAdding more intersections with "
+                f"{self.settings.min_node_gap_m:g}m gap..."
+            )
+            selected_nodes = add_nearby_intersections(
+                graph,
+                selected_nodes,
+                bach_khoa_coordinate,
+                ben_thanh_coordinate,
+                self.settings.target_vertices,
+                self.settings.min_node_gap_m,
+            )
+
+        print(f"\nSelected vertices: {len(selected_nodes)}")
+        selected_nodes_list, node_to_index = build_node_index(selected_nodes)
+
+        real_node_labels = {
+            "HCMUT_GATE": node_to_index.get(real_origin_node),
+            "BEN_THANH_GATE": node_to_index.get(real_destination_node),
+        }
+
+        print("\n================================")
+        print("VERTEX TABLE")
+        print("================================")
+
+        vertex_lines = []
+
+        for node in selected_nodes_list:
+
+            idx = node_to_index[node]
+
+            lat = graph.nodes[node]["y"]
+            lon = graph.nodes[node]["x"]
+
+            line = f"Vertex {idx}: " f"lat={lat:.8f}, " f"lon={lon:.8f}"
+
+            print(line)
+
+            vertex_lines.append(line)
+
+        with open(
+            "vertex_table.txt",
+            "w",
+            encoding="utf-8",
+        ) as file:
+
+            file.write("\n".join(vertex_lines))
+
+        explanation_lines = []
+
+        explanation_lines.append(
+            f"K shortest paths requested = {self.settings.k_paths}"
+        )
+
+        explanation_lines.append("")
+
+        for item in explanation_data:
+
+            if item["type"] == "initial":
+
+                explanation_lines.append("========================================")
+
+                explanation_lines.append("STEP 1")
+
+                explanation_lines.append("========================================")
+
+                explanation_lines.append("Initial shortest path:")
+
+                explanation_lines.append(
+                    display_path(
+                        item["path"],
+                        node_to_index,
+                        directed_graph,
+                        real_node_labels,
+                    )
+                )
+
+                explanation_lines.append(f"Cost = {item['cost']/1000:.3f} km")
+
+                explanation_lines.append("")
+
+                explanation_lines.append(f"Total edges = {len(item['path']) - 1}")
+
+                explanation_lines.append("")
+
+                explanation_lines.append(
+                    "Yen Algorithm now cuts each edge one-by-one to generate alternative paths."
+                )
+
+                explanation_lines.append("")
+
+            elif item["type"] == "iteration":
+
+                explanation_lines.append("========================================")
+
+                explanation_lines.append(f"ITERATION {item['iteration']}")
+
+                remaining_k = self.settings.k_paths - item["iteration"]
+
+                explanation_lines.append(
+                    f"Searching for path K = {item['iteration'] + 1}"
+                )
+
+                explanation_lines.append(f"Remaining paths to discover = {remaining_k}")
+
+                explanation_lines.append(
+                    "Yen algorithm removes one edge from the previous shortest path to generate alternative candidates."
+                )
+
+                explanation_lines.append("========================================")
+
+                explanation_lines.append("")
+
+                for spur in item["spur_operations"]:
+
+                    explanation_lines.append(f"SPUR EDGE INDEX = {spur['spur_index']}")
+
+                    if spur.get("failed"):
+
+                        explanation_lines.append("No valid spur path found.")
+
+                        explanation_lines.append("")
+                        continue
+
+                    explanation_lines.append("Root path:")
+
+                    explanation_lines.append(
+                        display_path(
+                            spur["root_path"],
+                            node_to_index,
+                            directed_graph,
+                            real_node_labels,
+                        )
+                    )
+
+                    explanation_lines.append("")
+
+                    explanation_lines.append("Candidate path:")
+
+                    explanation_lines.append(
+                        display_path(
+                            spur["candidate_path"],
+                            node_to_index,
+                            directed_graph,
+                            real_node_labels,
+                        )
+                    )
+
+                    explanation_lines.append("")
+
+                    explanation_lines.append(
+                        f"Candidate cost = {spur['candidate_cost']/1000:.3f} km"
+                    )
+
+                    explanation_lines.append("")
+
+                    if spur["inserted"]:
+
+                        explanation_lines.append("Inserted into heap.")
+
+                    else:
+
+                        explanation_lines.append("Ignored because path already exists.")
+
+                    explanation_lines.append("")
+
+                    explanation_lines.append(f"Heap size = {spur['heap_size']}")
+
+                    explanation_lines.append("")
+
+                    explanation_lines.append("Current heap:")
+
+                    for heap_item in spur["heap_snapshot"]:
+
+                        explanation_lines.append(
+                            f"[{heap_item['heap_index']}] "
+                            f"{heap_item['cost']/1000:.3f} km"
+                        )
+
+                        explanation_lines.append(
+                            display_path(
+                                heap_item["path"],
+                                node_to_index,
+                                directed_graph,
+                                real_node_labels,
+                            )
+                        )
+
+                    explanation_lines.append("")
+
+            elif item["type"] == "selected":
+
+                explanation_lines.append("========================================")
+
+                explanation_lines.append(
+                    f"SELECTED PATH FOR K = {item['iteration'] + 1}"
+                )
+
+                explanation_lines.append("========================================")
+
+                explanation_lines.append(
+                    display_path(
+                        item["path"],
+                        node_to_index,
+                        directed_graph,
+                        real_node_labels,
+                    )
+                )
+
+                explanation_lines.append(f"Cost = {item['cost']/1000:.3f} km")
+
+                explanation_lines.append(f"Remaining heap = {item['heap_remaining']}")
+
+                explanation_lines.append("")
+
+        explanation_lines.append("========================================")
+
+        explanation_lines.append("FINAL SUMMARY")
+
+        explanation_lines.append("========================================")
+
+        explanation_lines.append(f"Execution Time = {execution_ms:.2f} ms")
+
+        with open(
+            "shortest_path_yen_algorithms_heapify.txt",
+            "w",
+            encoding="utf-8",
+        ) as file:
+
+            file.write("\n".join(explanation_lines))
+
+        for idx, path in enumerate(paths):
+
+            length = lengths[idx]
+
+            print(f"\n================================")
+            print(f"Path {idx+1}")
+            print(f"================================")
+
+            print(f"Distance: {length / 1000:.2f} km")
+
+            print(f"Vertices: {len(path)}")
+
+            print("Route:")
+
+            print(
+                display_path(
+                    path,
+                    node_to_index,
+                    directed_graph,
+                    real_node_labels,
+                )
+            )
+
+        subgraph = build_subgraph(graph, selected_nodes)
+
+        print(f"Subgraph nodes: {len(subgraph.nodes)}")
+        print(f"Subgraph edges: {len(subgraph.edges)}")
+
+        center = Coordinate(
+            lat=(ben_thanh_coordinate.lat + bach_khoa_coordinate.lat) / 2,
+            lon=(ben_thanh_coordinate.lon + bach_khoa_coordinate.lon) / 2,
+        )
+
+        map_obj = create_base_map(center)
+        map_name = map_obj.get_name()
+
+        render_main_location_markers(
+            map_obj,
+            ben_thanh_coordinate,
+            bach_khoa_coordinate,
+            gate_selection.end_gate,
+            gate_selection.start_gate,
+            GATE_DISPLAY_NAMES,
+        )
+        render_selected_vertices(
+            map_obj,
+            graph,
+            selected_nodes,
+            node_to_index,
+        )
+
+        all_paths_group = render_path_layers(
+            map_obj,
+            graph,
+            directed_graph,
+            paths,
+            lengths,
+            node_to_index,
+            GATE_DISPLAY_NAMES,
+            gate_selection.start_gate,
+            gate_selection.end_gate,
+            self.settings.path_colors,
+            self.settings.base_path_weight,
+        )
+        all_paths_group.add_to(map_obj)
+
+        render_layer_control(map_obj)
+        inject_layer_control_styles(map_obj)
+
+        render_subgraph_edges(
+            map_obj,
+            graph,
+            subgraph,
+            self.settings.min_length_threshold_m,
+        )
+
+        export_path_csv_files(
+            self.settings.csv_output_folder,
+            graph,
+            directed_graph,
+            paths,
+        )
+
+        print("\nCSV exported successfully")
+
+        render_graph_info_panel(
+            map_obj,
+            map_name,
+            graph,
+            subgraph,
+            selected_nodes_list,
+            node_to_index,
+        )
+
+        export_html_map(map_obj, self.settings.output_html)
+
+        print("\n=================================================")
+        print("DONE")
+        print("=================================================")
+        print(f"HTML map saved as:")
+        print(self.settings.output_html)
+        print("\nOpen the HTML file in browser.")
+        print("You can zoom, click nodes, and inspect edges.")
+
+        export_graph_txt(
+            self.settings.graph_txt_path,
+            graph,
+            subgraph,
+            selected_nodes_list,
+            node_to_index,
+        )
+
+        print("\ngraph.txt exported successfully")
+
+        return PipelineResult(
+            html_path=self.settings.output_html,
+            graph_txt_path=self.settings.graph_txt_path,
+        )
+
+
+.
+.
+==================================================
+FILE: __init__.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\application\__init__.py
+==================================================
+.
+"""Application use cases and orchestration."""
+
+
+
+.
+.
+==================================================
+FILE: gates.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\config\gates.py
+==================================================
+.
+from __future__ import annotations
+
+from hcmut_paths.domain.models import Coordinate
+
+BACH_KHOA_GATES: dict[str, Coordinate] = {
+    "gate_1": Coordinate(10.772085537574405, 106.65770218648836),
+    "gate_2": Coordinate(10.772689726821197, 106.66066833396891),
+    "gate_3": Coordinate(10.773539119525351, 106.6613593305036),
+}
+
+BEN_THANH_GATES: dict[str, Coordinate] = {
+    "north": Coordinate(10.773162054715135, 106.69763552764178),
+    "east": Coordinate(10.77279460684222, 106.69850445081336),
+    "south": Coordinate(10.772030759155927, 106.69834289980986),
+    "west": Coordinate(10.772210782443693, 106.69757864713894),
+}
+
+GATE_DISPLAY_NAMES: dict[str, str] = {
+    "gate_1": "HCMUT Gate 1",
+    "gate_2": "HCMUT Gate 2",
+    "gate_3": "HCMUT Gate 3",
+    "north": "Ben Thanh North Gate",
+    "east": "Ben Thanh East Gate",
+    "south": "Ben Thanh South Gate",
+    "west": "Ben Thanh West Gate",
+}
+
+
+def initial_bbox_coordinates() -> tuple[Coordinate, Coordinate]:
+    return (
+        list(BACH_KHOA_GATES.values())[0],
+        list(BEN_THANH_GATES.values())[0],
+    )
+
+
+
+.
+.
+==================================================
+FILE: settings.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\config\settings.py
+==================================================
+.
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+
+MAX_PATHS = 5
+
+@dataclass(frozen=True)
+class AppSettings:
+    k_paths: int = MAX_PATHS
+    target_vertices: int = 100
+    min_length_threshold_m: float = 0
+    network_type: str = "drive"
+    lat_padding: float = 0.006
+    lon_padding: float = 0.006
+    intersection_tolerance_m: float = 25
+    min_node_gap_m: float = 80
+    output_html: Path = Path("hcmut_ben_thanh_k_paths.html")
+    csv_output_folder: Path = Path("list_vertex")
+    graph_txt_path: Path = Path("graph.txt")
+    origin_gate_node: str = "HCMUT_GATE"
+    destination_gate_node: str = "BEN_THANH_GATE"
+    custom_filter: str = """
+["highway"~"motorway|trunk|primary|secondary|tertiary"]
+"""
+    path_colors: list[str] = field(default_factory=lambda: [
+        "#ff0000",
+        "#0066ff",
+        "#8a2be2",
+        "#ff8800",
+        "#00aa00",
+        "#ff1493",
+        "#00cccc",
+        "#222222",
+        "#999900",
+        "#663300",
+    ])
+    base_path_weight: int = 8
+
+    @classmethod
+    def default(cls) -> "AppSettings":
+        return cls()
+
+
+
+.
+.
+==================================================
+FILE: __init__.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\config\__init__.py
+==================================================
+.
+"""Configuration for the route mapping application."""
+
+
+
+.
+.
+==================================================
+FILE: models.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\domain\models.py
+==================================================
+.
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+from hcmut_paths.domain.types import NodeId
+
+
+@dataclass(frozen=True)
+class Coordinate:
+    lat: float
+    lon: float
+
+    @classmethod
+    def from_tuple(cls, value: tuple[float, float]) -> "Coordinate":
+        return cls(lat=value[0], lon=value[1])
+
+    def as_tuple(self) -> tuple[float, float]:
+        return (self.lat, self.lon)
+
+    def as_folium_location(self) -> list[float]:
+        return [self.lat, self.lon]
+
+
+@dataclass(frozen=True)
+class GateDistanceAttempt:
+    start_gate: str
+    end_gate: str
+    distance_m: float | None = None
+    skipped: bool = False
+
+
+@dataclass(frozen=True)
+class GateSelection:
+    start_gate: str
+    end_gate: str
+    origin_node: NodeId
+    destination_node: NodeId
+    distance_m: float
+
+
+@dataclass(frozen=True)
+class GateConnectorResult:
+    origin_gate_node: NodeId
+    destination_gate_node: NodeId
+    origin_connector_length_m: float
+    destination_connector_length_m: float
+
+
+@dataclass(frozen=True)
+class PipelineResult:
+    html_path: Path
+    graph_txt_path: Path
+
+
+
+.
+.
+==================================================
+FILE: types.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\domain\types.py
+==================================================
+.
+from __future__ import annotations
+
+from typing import TypeAlias
+
+NodeId: TypeAlias = int | str
+
+
+
+.
+.
+==================================================
+FILE: __init__.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\domain\__init__.py
+==================================================
+.
+"""Domain objects shared across the route mapping application."""
+
+
+
+.
+.
+==================================================
+FILE: graph_txt_exporter.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\exporters\graph_txt_exporter.py
+==================================================
+.
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from hcmut_paths.domain.types import NodeId
+
+
+def export_graph_txt(
+    output_path: Path,
+    graph: Any,
+    subgraph: Any,
+    selected_nodes_list: list[NodeId],
+    node_to_index: dict[NodeId, int],
+) -> None:
+    with open(output_path, "w", encoding="utf-8") as file:
+        file.write(f"VERTICES {len(selected_nodes_list)}\n\n")
+
+        for idx, node in enumerate(selected_nodes_list):
+            lat = graph.nodes[node]["y"]
+            lon = graph.nodes[node]["x"]
+
+            file.write(
+                f"{idx} {lat:.8f} {lon:.8f}\n"
+            )
+
+        file.write("\nEDGES\n\n")
+
+        written_edges = set()
+
+        for u, v, data in subgraph.edges(data=True):
+            edge_key = tuple(sorted((str(u), str(v))))
+
+            if edge_key in written_edges:
+                continue
+
+            written_edges.add(edge_key)
+
+            if (
+                u not in node_to_index
+                or v not in node_to_index
+            ):
+                continue
+
+            u_idx = node_to_index[u]
+            v_idx = node_to_index[v]
+            length = float(
+                data.get("length", 0)
+            )
+
+            file.write(
+                f"{u_idx} "
+                f"{v_idx} "
+                f"{length:.2f}\n"
+            )
+
+
+
+.
+.
+==================================================
+FILE: html_exporter.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\exporters\html_exporter.py
+==================================================
+.
+from __future__ import annotations
+
+from pathlib import Path
+
+import folium
+
+
+def export_html_map(map_obj: folium.Map, output_path: Path) -> None:
+    map_obj.save(output_path)
+
+
+
+.
+.
+==================================================
+FILE: path_csv_exporter.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\exporters\path_csv_exporter.py
+==================================================
+.
+from __future__ import annotations
+
+import csv
+from pathlib import Path
+from typing import Any
+
+from hcmut_paths.domain.types import NodeId
+
+
+def export_path_csv_files(
+    output_folder: Path,
+    graph: Any,
+    directed_graph: Any,
+    paths: list[list[NodeId]],
+) -> None:
+    output_folder.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    for idx, path in enumerate(paths):
+        _export_vertex_csv(
+            output_folder / f"path_{idx+1}_vertices.csv",
+            graph,
+            path,
+        )
+        _export_edge_csv(
+            output_folder / f"path_{idx+1}_edges.csv",
+            graph,
+            directed_graph,
+            path,
+        )
+
+
+def _export_vertex_csv(
+    output_path: Path,
+    graph: Any,
+    path: list[NodeId],
+) -> None:
+    with open(
+        output_path,
+        "w",
+        newline="",
+        encoding="utf-8",
+    ) as file:
+        writer = csv.writer(file)
+        writer.writerow([
+            "vertex_order",
+            "node_id",
+            "latitude",
+            "longitude",
+        ])
+
+        for order, node in enumerate(path):
+            lat = graph.nodes[node]["y"]
+            lon = graph.nodes[node]["x"]
+            writer.writerow([
+                order,
+                node,
+                lat,
+                lon,
+            ])
+
+
+def _export_edge_csv(
+    output_path: Path,
+    graph: Any,
+    directed_graph: Any,
+    path: list[NodeId],
+) -> None:
+    with open(
+        output_path,
+        "w",
+        newline="",
+        encoding="utf-8",
+    ) as file:
+        writer = csv.writer(file)
+        writer.writerow([
+            "from_node",
+            "to_node",
+            "from_lat",
+            "from_lon",
+            "to_lat",
+            "to_lon",
+            "edge_length_m",
+        ])
+
+        for u, v in zip(path[:-1], path[1:]):
+            edge_data = directed_graph.get_edge_data(u, v)
+
+            if edge_data is None:
+                continue
+
+            length = edge_data.get("length", 0)
+
+            writer.writerow([
+                u,
+                v,
+                graph.nodes[u]["y"],
+                graph.nodes[u]["x"],
+                graph.nodes[v]["y"],
+                graph.nodes[v]["x"],
+                length,
+            ])
+
+
+
+.
+.
+==================================================
+FILE: __init__.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\exporters\__init__.py
+==================================================
+.
+"""File exporters for route, graph, and rendered map outputs."""
+
+
+
+.
+.
+==================================================
+FILE: directed_graph_builder.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\graph\directed_graph_builder.py
+==================================================
+.
+from __future__ import annotations
+
+from typing import Any
+
+import osmnx as ox
+
+
+def to_weighted_digraph(graph: Any) -> Any:
+    return ox.convert.to_digraph(graph, weight="length")
+
+
+
+.
+.
+==================================================
+FILE: gate_connector.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\graph\gate_connector.py
+==================================================
+.
+from __future__ import annotations
+
+from typing import Any
+
+import osmnx as ox
+from geopy.distance import geodesic
+
+from hcmut_paths.domain.models import Coordinate, GateConnectorResult
+from hcmut_paths.domain.types import NodeId
+
+
+def nearest_node(graph: Any, coordinate: Coordinate) -> NodeId:
+    return ox.nearest_nodes(
+        graph,
+        X=coordinate.lon,
+        Y=coordinate.lat,
+    )
+
+
+def connect_gate_nodes(
+    graph: Any,
+    origin_node: NodeId,
+    destination_node: NodeId,
+    origin_coordinate: Coordinate,
+    destination_coordinate: Coordinate,
+    origin_gate_node: NodeId,
+    destination_gate_node: NodeId,
+) -> GateConnectorResult:
+    graph.add_node(
+        origin_gate_node,
+        y=origin_coordinate.lat,
+        x=origin_coordinate.lon,
+    )
+    graph.add_node(
+        destination_gate_node,
+        y=destination_coordinate.lat,
+        x=destination_coordinate.lon,
+    )
+
+    origin_node_coord = (
+        graph.nodes[origin_node]["y"],
+        graph.nodes[origin_node]["x"],
+    )
+    origin_connector_length = geodesic(
+        origin_coordinate.as_tuple(),
+        origin_node_coord,
+    ).meters
+
+    graph.add_edge(
+        origin_gate_node,
+        origin_node,
+        length=origin_connector_length,
+    )
+    graph.add_edge(
+        origin_node,
+        origin_gate_node,
+        length=origin_connector_length,
+    )
+
+    destination_node_coord = (
+        graph.nodes[destination_node]["y"],
+        graph.nodes[destination_node]["x"],
+    )
+    destination_connector_length = geodesic(
+        destination_coordinate.as_tuple(),
+        destination_node_coord,
+    ).meters
+
+    graph.add_edge(
+        destination_node,
+        destination_gate_node,
+        length=destination_connector_length,
+    )
+    graph.add_edge(
+        destination_gate_node,
+        destination_node,
+        length=destination_connector_length,
+    )
+
+    return GateConnectorResult(
+        origin_gate_node=origin_gate_node,
+        destination_gate_node=destination_gate_node,
+        origin_connector_length_m=origin_connector_length,
+        destination_connector_length_m=destination_connector_length,
+    )
+
+
+
+.
+.
+==================================================
+FILE: geometry.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\graph\geometry.py
+==================================================
+.
+from __future__ import annotations
+
+from typing import Any
+
+from hcmut_paths.domain.types import NodeId
+
+
+def edge_coordinates(graph: Any, u: NodeId, v: NodeId, edge_data: dict[str, Any]) -> list[list[float]]:
+    geometry = edge_data.get("geometry", None)
+
+    if geometry is not None:
+        return [
+            [lat, lon]
+            for lon, lat in geometry.coords
+        ]
+
+    return [
+        [graph.nodes[u]["y"], graph.nodes[u]["x"]],
+        [graph.nodes[v]["y"], graph.nodes[v]["x"]],
+    ]
+
+
+def route_segments(graph: Any, directed_graph: Any, path: list[NodeId]) -> list[tuple[float, float]]:
+    segments: list[tuple[float, float]] = []
+
+    for u, v in zip(path[:-1], path[1:]):
+        edge_data = directed_graph.get_edge_data(u, v)
+
+        if edge_data is None:
+            continue
+
+        geometry = edge_data.get("geometry", None)
+
+        if geometry is not None:
+            coords = [
+                (lat, lon)
+                for lon, lat in geometry.coords
+            ]
+        else:
+            coords = [
+                (
+                    graph.nodes[u]["y"],
+                    graph.nodes[u]["x"],
+                ),
+                (
+                    graph.nodes[v]["y"],
+                    graph.nodes[v]["x"],
+                ),
+            ]
+
+        segments.extend(coords)
+
+    return segments
+
+
+
+.
+.
+==================================================
+FILE: node_indexer.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\graph\node_indexer.py
+==================================================
+.
+from __future__ import annotations
+
+from hcmut_paths.domain.types import NodeId
+
+
+def build_node_index(
+    selected_nodes: set[NodeId],
+) -> tuple[
+    list[NodeId],
+    dict[NodeId, int],
+]:
+
+    integer_nodes = sorted(
+        [
+            node
+            for node in selected_nodes
+            if isinstance(node, int)
+        ]
+    )
+
+    special_nodes = [
+        node
+        for node in selected_nodes
+        if isinstance(node, str)
+    ]
+
+    selected_nodes_list = (
+        integer_nodes + special_nodes
+    )
+
+    node_to_index = {
+        node: idx
+        for idx, node in enumerate(
+            selected_nodes_list
+        )
+    }
+
+    return (
+        selected_nodes_list,
+        node_to_index,
+    )
+
+.
+.
+==================================================
+FILE: osm_loader.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\graph\osm_loader.py
+==================================================
+.
+from __future__ import annotations
+
+from typing import Any
+
+import osmnx as ox
+
+from hcmut_paths.domain.models import Coordinate
+
+
+def build_bbox(
+    start: Coordinate,
+    end: Coordinate,
+    lat_padding: float,
+    lon_padding: float,
+) -> tuple[float, float, float, float]:
+    north = max(end.lat, start.lat) + lat_padding
+    south = min(end.lat, start.lat) - lat_padding
+    east = max(end.lon, start.lon) + lon_padding
+    west = min(end.lon, start.lon) - lon_padding
+    return (west, south, east, north)
+
+
+def load_consolidated_graph(
+    bbox: tuple[float, float, float, float],
+    custom_filter: str,
+    intersection_tolerance_m: float,
+) -> Any:
+    raw_graph = ox.graph_from_bbox(
+        bbox,
+        custom_filter=custom_filter,
+        simplify=True,
+    )
+    projected_graph = ox.project_graph(raw_graph)
+    consolidated_graph = ox.consolidate_intersections(
+        projected_graph,
+        rebuild_graph=True,
+        tolerance=intersection_tolerance_m,
+        dead_ends=False,
+    )
+    return ox.project_graph(consolidated_graph, to_crs="EPSG:4326")
+
+
+
+.
+.
+==================================================
+FILE: subgraph_builder.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\graph\subgraph_builder.py
+==================================================
+.
+from __future__ import annotations
+
+from typing import Any
+
+from geopy.distance import geodesic
+
+from hcmut_paths.domain.models import Coordinate
+from hcmut_paths.domain.types import NodeId
+
+
+def collect_route_nodes(paths: list[list[NodeId]]) -> set[NodeId]:
+    selected_nodes: set[NodeId] = set()
+    for path in paths:
+        for node in path:
+            selected_nodes.add(node)
+    return selected_nodes
+
+
+def add_nearby_intersections(
+    graph: Any,
+    selected_nodes: set[NodeId],
+    start_coordinate: Coordinate,
+    end_coordinate: Coordinate,
+    target_vertices: int,
+    min_node_gap_m: float,
+) -> set[NodeId]:
+    center_lat = (end_coordinate.lat + start_coordinate.lat) / 2
+    center_lon = (end_coordinate.lon + start_coordinate.lon) / 2
+
+    def corridor_distance(node_id: NodeId) -> float:
+        lat = graph.nodes[node_id]["y"]
+        lon = graph.nodes[node_id]["x"]
+        return geodesic(
+            (lat, lon),
+            (center_lat, center_lon),
+        ).meters
+
+    candidates: list[NodeId] = []
+    for node, data in graph.nodes(data=True):
+        if node in selected_nodes:
+            continue
+
+        street_count = int(data.get("street_count", 0))
+        if street_count >= 3:
+            candidates.append(node)
+
+    candidates.sort(key=corridor_distance)
+
+    for node in candidates:
+        if len(selected_nodes) >= target_vertices:
+            break
+
+        node_lat = graph.nodes[node]["y"]
+        node_lon = graph.nodes[node]["x"]
+
+        is_too_close = False
+        for selected_node in selected_nodes:
+            selected_lat = graph.nodes[selected_node]["y"]
+            selected_lon = graph.nodes[selected_node]["x"]
+
+            dist = geodesic(
+                (node_lat, node_lon),
+                (selected_lat, selected_lon),
+            ).meters
+
+            if dist < min_node_gap_m:
+                is_too_close = True
+                break
+
+        if not is_too_close:
+            selected_nodes.add(node)
+
+    return selected_nodes
+
+
+def build_subgraph(graph: Any, selected_nodes: set[NodeId]) -> Any:
+    return graph.subgraph(selected_nodes).copy()
+
+
+
+.
+.
+==================================================
+FILE: __init__.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\graph\__init__.py
+==================================================
+.
+"""Graph loading, preparation, geometry, and indexing services."""
+
+
+
+.
+.
+==================================================
+FILE: edge_renderer.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\rendering\edge_renderer.py
+==================================================
+.
+from __future__ import annotations
+
+from typing import Any
+
+import folium
+
+from hcmut_paths.graph.geometry import edge_coordinates
+
+
+def render_subgraph_edges(
+    map_obj: folium.Map,
+    graph: Any,
+    subgraph: Any,
+    min_length_threshold_m: float,
+) -> None:
+    drawn_edges = set()
+
+    for u, v, data in subgraph.edges(data=True):
+        if (u, v) in drawn_edges:
+            continue
+
+        drawn_edges.add((u, v))
+        length = float(data.get("length", 0))
+
+        if length < min_length_threshold_m:
+            continue
+
+        coords = edge_coordinates(graph, u, v, data)
+        folium.PolyLine(
+            coords,
+            color="gray",
+            weight=2,
+            opacity=0.5,
+        ).add_to(map_obj)
+
+        middle_index = len(coords) // 2
+        mid_lat, mid_lon = coords[middle_index]
+
+        folium.Marker(
+            [mid_lat, mid_lon],
+            icon=folium.DivIcon(
+                html=f"""
+            <div style="
+                font-size:10px;
+                color:black;
+                background:white;
+                padding:2px;
+                border-radius:3px;
+                white-space: nowrap;
+            ">
+                {length:.0f}m
+            </div>
+            """
+            ),
+        ).add_to(map_obj)
+
+
+
+.
+.
+==================================================
+FILE: folium_map_factory.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\rendering\folium_map_factory.py
+==================================================
+.
+from __future__ import annotations
+
+import folium
+
+from hcmut_paths.domain.models import Coordinate
+
+
+def create_base_map(center: Coordinate) -> folium.Map:
+    return folium.Map(
+        location=center.as_folium_location(),
+        zoom_start=15,
+        tiles="OpenStreetMap",
+    )
+
+
+
+.
+.
+==================================================
+FILE: graph_panel_renderer.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\rendering\graph_panel_renderer.py
+==================================================
+.
+from __future__ import annotations
+
+from typing import Any
+import json
+
+import folium
+
+from hcmut_paths.domain.types import NodeId
+from hcmut_paths.graph.geometry import edge_coordinates
+from hcmut_paths.rendering.static_asset_injector import (
+    render_script_asset,
+    render_style_asset,
+)
+from hcmut_paths.rendering.template_renderer import render_template
+
+
+def render_graph_info_panel(
+    map_obj: folium.Map,
+    map_name: str,
+    graph: Any,
+    subgraph: Any,
+    selected_nodes_list: list[NodeId],
+    node_to_index: dict[NodeId, int],
+) -> None:
+    vertex_rows: list[str] = []
+    vertex_coords: dict[int, list[float]] = {}
+
+    for idx, node in enumerate(selected_nodes_list):
+        lat = graph.nodes[node]["y"]
+        lon = graph.nodes[node]["x"]
+        vertex_coords[idx] = [lat, lon]
+        vertex_rows.append(
+            f'<span class="graph-panel__vertex" data-vertex-id="{idx}">'
+            f"{idx:03d}"
+            f"</span> | "
+            f"{lat:.8f} | "
+            f"{lon:.8f}"
+        )
+
+    edge_rows: list[str] = []
+    edge_coords_by_id: dict[int, list[list[float]]] = {}
+    edge_id = 0
+
+    for u, v, data in subgraph.edges(data=True):
+        if (
+            u not in node_to_index
+            or v not in node_to_index
+        ):
+            continue
+
+        u_idx = node_to_index[u]
+        v_idx = node_to_index[v]
+        length = float(data.get("length", 0))
+        edge_coords_by_id[edge_id] = edge_coordinates(graph, u, v, data)
+        edge_rows.append(
+            f'<span class="graph-panel__edge" data-edge-id="{edge_id}">'
+            f"{u_idx:03d} | {v_idx:03d}"
+            f"</span> | "
+            f"{length:.2f}"
+        )
+        edge_id += 1
+
+    panel_html = render_template(
+        "ui/templates/graph_panel.html",
+        {
+            "GRAPH_PANEL_CSS": render_style_asset("ui/assets/css/graph_panel.css"),
+            "TOTAL_VERTICES": str(len(selected_nodes_list)),
+            "TOTAL_EDGES": str(len(subgraph.edges)),
+            "VERTEX_ROWS": "\n".join(vertex_rows),
+            "EDGE_ROWS": "\n".join(edge_rows),
+            "MAP_INTERACTIONS_JS": render_script_asset(
+                "ui/assets/js/map_interactions.js",
+                {
+                    "__MAP_NAME__": map_name,
+                    "__VERTEX_COORDS__": json.dumps(vertex_coords),
+                    "__EDGE_COORDS__": json.dumps(edge_coords_by_id),
+                },
+            ),
+            "GRAPH_PANEL_JS": render_script_asset("ui/assets/js/graph_panel.js"),
+        },
+    )
+
+    map_obj.get_root().html.add_child(
+        folium.Element(panel_html)
+    )
+
+
+.
+.
+==================================================
+FILE: layer_control_renderer.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\rendering\layer_control_renderer.py
+==================================================
+.
+from __future__ import annotations
+
+import folium
+
+from hcmut_paths.rendering.static_asset_injector import inject_header_style
+
+
+def render_layer_control(map_obj: folium.Map) -> None:
+    folium.LayerControl(
+        position="bottomleft",
+        collapsed=False,
+    ).add_to(map_obj)
+
+
+def inject_layer_control_styles(map_obj: folium.Map) -> None:
+    inject_header_style(map_obj, "ui/assets/css/layer_control.css")
+
+
+
+.
+.
+==================================================
+FILE: location_marker_renderer.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\rendering\location_marker_renderer.py
+==================================================
+.
+from __future__ import annotations
+
+import folium
+
+from hcmut_paths.domain.models import Coordinate
+
+
+def render_main_location_markers(
+    map_obj: folium.Map,
+    ben_thanh_coordinate: Coordinate,
+    bach_khoa_coordinate: Coordinate,
+    end_gate: str,
+    start_gate: str,
+    gate_display_names: dict[str, str],
+) -> None:
+    folium.Marker(
+        location=ben_thanh_coordinate.as_folium_location(),
+        popup=f"Ben Thanh {gate_display_names[end_gate]}",
+        icon=folium.Icon(color="red"),
+    ).add_to(map_obj)
+
+    folium.Marker(
+        location=bach_khoa_coordinate.as_folium_location(),
+        popup=f"HCMUT {gate_display_names[start_gate]}",
+        icon=folium.Icon(color="blue"),
+    ).add_to(map_obj)
+
+
+
+.
+.
+==================================================
+FILE: path_layer_renderer.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\rendering\path_layer_renderer.py
+==================================================
+.
+from __future__ import annotations
+
+from typing import Any
+
+import folium
+from folium import FeatureGroup
+
+from hcmut_paths.domain.types import NodeId
+from hcmut_paths.graph.geometry import route_segments
+from hcmut_paths.rendering.template_renderer import render_template
+
+
+def render_path_layers(
+    map_obj: folium.Map,
+    graph: Any,
+    directed_graph: Any,
+    paths: list[list[NodeId]],
+    lengths: list[float],
+    node_to_index: dict[NodeId, int],
+    gate_display_names: dict[str, str],
+    start_gate: str,
+    end_gate: str,
+    colors: list[str],
+    base_weight: int,
+) -> FeatureGroup:
+    all_paths_group = FeatureGroup(
+        name="Show All Paths",
+        show=True,
+    )
+
+    for idx, path in enumerate(paths):
+        color = colors[idx % len(colors)]
+        line_weight = max(3, base_weight - idx)
+        path_group = FeatureGroup(
+            name=f"Path {idx+1} ({lengths[idx]/1000:.2f} km)",
+            show=False,
+        )
+
+        segments = route_segments(graph, directed_graph, path)
+        path_popup = render_template(
+            "ui/templates/popup_path.html",
+            {
+                "PATH_NUMBER": str(idx + 1),
+                "DISTANCE_KM": f"{lengths[idx]/1000:.2f}",
+            },
+        )
+
+        folium.PolyLine(
+            segments,
+            color=color,
+            weight=line_weight,
+            opacity=0.9,
+            popup=path_popup,
+        ).add_to(path_group)
+
+        folium.PolyLine(
+            segments,
+            color=color,
+            weight=line_weight,
+            opacity=0.9,
+            popup=path_popup,
+        ).add_to(all_paths_group)
+
+        _render_path_nodes(
+            path_group,
+            graph,
+            path,
+            idx + 1,
+            node_to_index,
+        )
+        _render_endpoint_markers(
+            path_group,
+            graph,
+            path,
+            idx + 1,
+            node_to_index,
+            gate_display_names,
+            start_gate,
+            end_gate,
+        )
+
+        path_group.add_to(map_obj)
+
+    return all_paths_group
+
+
+def _render_path_nodes(
+    path_group: FeatureGroup,
+    graph: Any,
+    path: list[NodeId],
+    path_number: int,
+    node_to_index: dict[NodeId, int],
+) -> None:
+    for node in path:
+        lat = graph.nodes[node]["y"]
+        lon = graph.nodes[node]["x"]
+
+        popup = render_template(
+            "ui/templates/popup_path_node.html",
+            {
+                "VERTEX_ID": str(node_to_index[node]),
+                "PATH_NUMBER": str(path_number),
+                "LATITUDE": f"{lat:.8f}",
+                "LONGITUDE": f"{lon:.8f}",
+            },
+        )
+
+        folium.CircleMarker(
+            location=[lat, lon],
+            radius=8,
+            weight=2,
+            color="white",
+            fill=True,
+            fill_color="red",
+            fill_opacity=1.0,
+            popup=popup,
+        ).add_to(path_group)
+
+
+def _render_endpoint_markers(
+    path_group: FeatureGroup,
+    graph: Any,
+    path: list[NodeId],
+    path_number: int,
+    node_to_index: dict[NodeId, int],
+    gate_display_names: dict[str, str],
+    start_gate: str,
+    end_gate: str,
+) -> None:
+    first_node = path[0]
+    last_node = path[-1]
+    first_lat = graph.nodes[first_node]["y"]
+    first_lon = graph.nodes[first_node]["x"]
+    last_lat = graph.nodes[last_node]["y"]
+    last_lon = graph.nodes[last_node]["x"]
+
+    start_popup = render_template(
+        "ui/templates/popup_endpoint.html",
+        {
+            "ENDPOINT_LABEL": "Start",
+            "PATH_NUMBER": str(path_number),
+            "PLACE_LABEL": "HCMUT",
+            "GATE_DISPLAY_NAME": gate_display_names[start_gate],
+            "VERTEX_ID": str(node_to_index[first_node]),
+            "LATITUDE": f"{first_lat:.8f}",
+            "LONGITUDE": f"{first_lon:.8f}",
+        },
+    )
+    folium.Marker(
+        location=[first_lat, first_lon],
+        popup=start_popup,
+        icon=folium.Icon(color="green"),
+    ).add_to(path_group)
+
+    end_popup = render_template(
+        "ui/templates/popup_endpoint.html",
+        {
+            "ENDPOINT_LABEL": "End",
+            "PATH_NUMBER": str(path_number),
+            "PLACE_LABEL": "Ben Thanh",
+            "GATE_DISPLAY_NAME": gate_display_names[end_gate],
+            "VERTEX_ID": str(node_to_index[last_node]),
+            "LATITUDE": f"{last_lat:.8f}",
+            "LONGITUDE": f"{last_lon:.8f}",
+        },
+    )
+    folium.Marker(
+        location=[last_lat, last_lon],
+        popup=end_popup,
+        icon=folium.Icon(color="darkred"),
+    ).add_to(path_group)
+
+
+
+.
+.
+==================================================
+FILE: static_asset_injector.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\rendering\static_asset_injector.py
+==================================================
+.
+from __future__ import annotations
+
+import folium
+
+from hcmut_paths.rendering.template_renderer import read_package_text
+
+
+def render_style_asset(relative_path: str) -> str:
+    css = read_package_text(relative_path)
+    return f"<style>\n{css}\n</style>"
+
+
+def render_script_asset(relative_path: str, replacements: dict[str, str] | None = None) -> str:
+    javascript = read_package_text(relative_path)
+
+    for key, value in (replacements or {}).items():
+        javascript = javascript.replace(key, value)
+
+    return f"<script>\n{javascript}\n</script>"
+
+
+def inject_header_style(map_obj: folium.Map, relative_path: str) -> None:
+    map_obj.get_root().header.add_child(
+        folium.Element(render_style_asset(relative_path))
+    )
+
+
+
+.
+.
+==================================================
+FILE: template_renderer.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\rendering\template_renderer.py
+==================================================
+.
+from __future__ import annotations
+
+from importlib import resources
+
+
+def read_package_text(relative_path: str) -> str:
+    return (
+        resources.files("hcmut_paths")
+        .joinpath(relative_path)
+        .read_text(encoding="utf-8")
+    )
+
+
+def render_template(relative_path: str, context: dict[str, str]) -> str:
+    content = read_package_text(relative_path)
+
+    for key, value in context.items():
+        content = content.replace("{{ " + key + " }}", value)
+
+    return content
+
+
+
+.
+.
+==================================================
+FILE: vertex_renderer.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\rendering\vertex_renderer.py
+==================================================
+.
+from __future__ import annotations
+
+from typing import Any
+
+import folium
+
+from hcmut_paths.domain.types import NodeId
+from hcmut_paths.rendering.template_renderer import render_template
+
+
+def render_selected_vertices(
+    map_obj: folium.Map,
+    graph: Any,
+    selected_nodes: set[NodeId],
+    node_to_index: dict[NodeId, int],
+) -> None:
+    for node in selected_nodes:
+        lat = graph.nodes[node]["y"]
+        lon = graph.nodes[node]["x"]
+        street_count = graph.nodes[node].get("street_count", 0)
+
+        info_html = render_template(
+            "ui/templates/popup_vertex.html",
+            {
+                "VERTEX_ID": str(node_to_index[node]),
+                "LATITUDE": f"{lat:.8f}",
+                "LONGITUDE": f"{lon:.8f}",
+                "STREET_COUNT": str(street_count),
+            },
+        )
+
+        vertex_marker = folium.CircleMarker(
+            location=[lat, lon],
+            radius=7,
+            color="white",
+            weight=2,
+            fill=True,
+            fill_color="green",
+            fill_opacity=0.9,
+            tooltip=folium.Tooltip(info_html, sticky=True),
+        )
+        folium.Popup(info_html).add_to(vertex_marker)
+        vertex_marker.add_to(map_obj)
+
+        marker_name = f"vertex_marker_{node_to_index[node]}"
+        vertex_marker._name = marker_name
+
+
+
+.
+.
+==================================================
+FILE: __init__.py
+FULL PATH: D:\B ch khoa\Math\Th?y Tu?n Anh\Path Ben Thanh - HCMUT\src\hcmut_paths\rendering\__init__.py
+==================================================
+.
+"""Folium rendering and UI assembly modules."""
+
+
+
+.
+.
