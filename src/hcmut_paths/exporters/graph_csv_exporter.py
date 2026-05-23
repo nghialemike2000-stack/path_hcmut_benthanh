@@ -87,6 +87,11 @@ def export_graph_csv(
         edges,
     )
 
+    export_edges_list_csv(
+        output_folder / "edges.csv",
+        edges,
+    )
+
 
 def export_vertices_csv(
     output_path: Path,
@@ -162,3 +167,28 @@ def export_adjacency_matrix_csv(
             writer.writerow(
                 [i] + matrix[i]
             )
+
+def export_edges_list_csv(
+    output_path: Path,
+    edges: list[tuple[int, int, float]],
+) -> None:
+    unique_edges = set()
+    
+    for u, v, weight in edges:
+        # Enforce order (smaller ID first) to filter out reverse-direction duplicates
+        vertex_A = min(u, v)
+        vertex_B = max(u, v)
+        unique_edges.add((vertex_A, vertex_B, weight))
+        
+    with open(
+        output_path, "w", newline="", encoding="utf-8"
+    ) as file:
+        writer = csv.writer(file)
+        # Creates 3 columns exactly as requested
+        writer.writerow(["vertex_A", "vertex_B", "edges"])
+        
+        # Sort by vertex_A then vertex_B for clean visualization
+        for v_A, v_B, weight in sorted(unique_edges):
+            writer.writerow([v_A, v_B, weight])
+
+            
