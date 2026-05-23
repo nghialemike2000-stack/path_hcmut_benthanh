@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-MAX_PATHS = 5
+MAX_PATHS = 3
 
 @dataclass(frozen=True)
 class AppSettings:
